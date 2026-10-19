@@ -1,0 +1,6 @@
+plugins { id 'com.android.application' }
+android {
+ namespace 'jp.terada.midnitelogger'
+ compileSdk 35
+ defaultConfig { applicationId 'jp.terada.midnitelogger'; minSdk 14; targetSdk 28; versionCode 1; versionName '0.1.0' }
+}
