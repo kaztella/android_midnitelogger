@@ -7,10 +7,20 @@ import android.os.Bundle;
 import android.view.View;
 import android.widget.EditText;
 import android.widget.TextView;
+import android.widget.RadioButton;
+import java.text.SimpleDateFormat;
+import java.util.Calendar;
+import java.util.Date;
+import java.util.Locale;
 
 public class MainActivity extends Activity {
     private SharedPreferences preferences;
-    private TextView stateView, currentView, eventsView;
+    private TextView stateView, currentView, eventsView, chartPeriodView;
+    private ChartView chartView;
+    private EditText chartDateView, chartTimeView;
+    private RadioButton fromSelectedView;
+    private final SimpleDateFormat chartInputFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US);
+    private final SimpleDateFormat chartLabelFormat = new SimpleDateFormat("MM/dd HH:mm", Locale.US);
 
     @Override public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -22,6 +32,15 @@ public class MainActivity extends Activity {
         stateView = (TextView) findViewById(R.id.state);
         currentView = (TextView) findViewById(R.id.current);
         eventsView = (TextView) findViewById(R.id.events);
+        chartView = (ChartView) findViewById(R.id.chart);
+        chartDateView = (EditText) findViewById(R.id.chartDate);
+        chartTimeView = (EditText) findViewById(R.id.chartTime);
+        chartPeriodView = (TextView) findViewById(R.id.chartPeriod);
+        fromSelectedView = (RadioButton) findViewById(R.id.fromSelected);
+        Calendar initial = Calendar.getInstance();
+        initial.set(Calendar.HOUR_OF_DAY, 0); initial.set(Calendar.MINUTE, 0);
+        initial.set(Calendar.SECOND, 0); initial.set(Calendar.MILLISECOND, 0);
+        setChartBase(initial.getTimeInMillis());
         ip.setText(preferences.getString("ip", "192.168.10.1"));
         ssid.setText(preferences.getString("ssid", "ClassicLogger"));
         url.setText(preferences.getString("url", ""));
@@ -40,8 +59,17 @@ public class MainActivity extends Activity {
         findViewById(R.id.upload).setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View view) { startService(new Intent(MainActivity.this, LoggerService.class).setAction("UPLOAD_NOW")); }
         });
+        findViewById(R.id.refreshChart).setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View view) { refreshChart(); }
+        });
+        findViewById(R.id.previousDay).setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View view) { shiftChartBase(-1); }
+        });
+        findViewById(R.id.nextDay).setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View view) { shiftChartBase(1); }
+        });
     }
-    @Override protected void onResume() { super.onResume(); refresh(); }
+    @Override protected void onResume() { super.onResume(); refresh(); refreshChart(); }
     private void refresh() {
         Database db = new Database(this);
         try {
@@ -51,4 +79,43 @@ public class MainActivity extends Activity {
             eventsView.setText(db.recentEvents());
         } finally { db.close(); }
     }
+    private long parseChartBase() throws Exception {
+        return chartInputFormat.parse(chartDateView.getText().toString().trim() + " " +
+                chartTimeView.getText().toString().trim()).getTime();
+    }
+
+    private void setChartBase(long millis) {
+        String[] parts = chartInputFormat.format(new Date(millis)).split(" ");
+        chartDateView.setText(parts[0]);
+        chartTimeView.setText(parts[1]);
+    }
+
+    private void shiftChartBase(int days) {
+        try {
+            Calendar calendar = Calendar.getInstance();
+            calendar.setTimeInMillis(parseChartBase());
+            calendar.add(Calendar.DAY_OF_MONTH, days);
+            setChartBase(calendar.getTimeInMillis());
+            refreshChart();
+        } catch (Exception e) {
+            chartPeriodView.setText("日時は yyyy-MM-dd / HH:mm で入力してください");
+        }
+    }
+
+    private void refreshChart() {
+        Database db = new Database(this);
+        try {
+            long selected = parseChartBase();
+            long day = 24L * 60L * 60L * 1000L;
+            long start = fromSelectedView.isChecked() ? selected : selected - day;
+            long end = fromSelectedView.isChecked() ? selected + day : selected;
+            chartPeriodView.setText("表示期間: " + chartLabelFormat.format(new Date(start)) +
+                    " ～ " + chartLabelFormat.format(new Date(end)));
+            chartView.setSeries("バッテリー電圧", "V", db.batteryVoltagePoints(start, end, 240));
+        } catch (Exception e) {
+            chartPeriodView.setText("日時は yyyy-MM-dd / HH:mm で入力してください");
+            chartView.setSeries("バッテリー電圧", "V", null);
+        } finally { db.close(); }
+    }
+
 }

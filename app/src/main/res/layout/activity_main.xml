@@ -21,6 +21,39 @@
             android:layout_width="match_parent" android:layout_height="wrap_content" />
         <Button android:id="@+id/upload" android:text="今すぐ30秒アップロード"
             android:layout_width="match_parent" android:layout_height="wrap_content" />
+        <TextView android:text="24時間グラフの基準日時" android:textStyle="bold"
+            android:layout_width="match_parent" android:layout_height="wrap_content" />
+        <EditText android:id="@+id/chartDate" android:hint="2026-10-20"
+            android:singleLine="true" android:inputType="date"
+            android:layout_width="match_parent" android:layout_height="wrap_content" />
+        <EditText android:id="@+id/chartTime" android:hint="00:00"
+            android:singleLine="true" android:inputType="time"
+            android:layout_width="match_parent" android:layout_height="wrap_content" />
+        <RadioGroup android:id="@+id/chartRangeMode" android:orientation="horizontal"
+            android:layout_width="match_parent" android:layout_height="wrap_content">
+            <RadioButton android:id="@+id/fromSelected" android:text="この日時から24時間"
+                android:checked="true" android:layout_width="0dp" android:layout_weight="1"
+                android:layout_height="wrap_content" />
+            <RadioButton android:id="@+id/toSelected" android:text="この日時まで24時間"
+                android:layout_width="0dp" android:layout_weight="1"
+                android:layout_height="wrap_content" />
+        </RadioGroup>
+        <LinearLayout android:orientation="horizontal"
+            android:layout_width="match_parent" android:layout_height="wrap_content">
+            <Button android:id="@+id/previousDay" android:text="前日"
+                android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" />
+            <Button android:id="@+id/nextDay" android:text="翌日"
+                android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" />
+            <Button android:id="@+id/refreshChart" android:text="表示"
+                android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" />
+        </LinearLayout>
+        <TextView android:id="@+id/chartPeriod" android:text="表示期間"
+            android:layout_width="match_parent" android:layout_height="wrap_content" />
+        <jp.terada.midnitelogger.ChartView
+            android:id="@+id/chart"
+            android:layout_width="match_parent"
+            android:layout_height="280dp"
+            android:layout_marginTop="6dp" />
         <TextView android:id="@+id/events" android:text="イベント履歴" android:textSize="14sp"
             android:paddingTop="12dp" android:layout_width="match_parent" android:layout_height="wrap_content" />
     </LinearLayout>

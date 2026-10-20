@@ -31,26 +31,11 @@ public class LoggerService extends Service {
         preferences.edit().putBoolean("running", false).apply();
         if (executor != null) executor.shutdownNow(); if (database != null) database.close(); stopForeground(true); super.onDestroy();
     }
-@SuppressWarnings("deprecation")
-private void startForegroundMode() {
-    PendingIntent pending = PendingIntent.getActivity(
-            this,
-            0,
-            new Intent(this, MainActivity.class),
-            PendingIntent.FLAG_UPDATE_CURRENT
-    );
-
-    Notification notification = new Notification.Builder(this)
-            .setSmallIcon(android.R.drawable.stat_notify_sync)
-            .setTicker("MidNite Logger")
-            .setContentTitle("MidNite Logger")
-            .setContentText("Classicロギング中")
-            .setContentIntent(pending)
-            .setOngoing(true)
-            .getNotification();
-
-    startForeground(1, notification);
-}
+    @SuppressWarnings("deprecation") private void startForegroundMode() {
+        Notification notification = new Notification(android.R.drawable.stat_notify_sync, "MidNite Logger", System.currentTimeMillis());
+        PendingIntent pending = PendingIntent.getActivity(this, 0, new Intent(this, MainActivity.class), PendingIntent.FLAG_UPDATE_CURRENT);
+        notification.setLatestEventInfo(this, "MidNite Logger", "Classicロギング中", pending); startForeground(1, notification);
+    }
     private void runCycle() {
         try {
             String loggerSsid = preferences.getString("ssid", "ClassicLogger");

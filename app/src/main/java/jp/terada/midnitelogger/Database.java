@@ -8,6 +8,8 @@ import android.database.sqlite.SQLiteOpenHelper;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
+import java.util.ArrayList;
+import java.util.List;
 
 public class Database extends SQLiteOpenHelper {
     public Database(Context context) { super(context, "midnite.db", null, 1); }
@@ -56,5 +58,33 @@ public class Database extends SQLiteOpenHelper {
         return getReadableDatabase().rawQuery("SELECT id,ts,battery_v,pv_v,classic_a,daily_kwh,watts,stage,cstate,pv_a,daily_ah,lifetime_kwh,lifetime_ah,batt_temp,fet_temp,pcb_temp,float_sec,wb_pos_ah,wb_neg_ah,wb_net_ah,wb_a,wb_precise_a FROM log WHERE uploaded=0 ORDER BY id LIMIT " + limit, null);
     }
     public void acknowledge(long maxId) { getWritableDatabase().execSQL("UPDATE log SET uploaded=1 WHERE id<=?", new Object[]{maxId}); }
+
+    public List<ChartView.Point> batteryVoltagePoints(long startMillis, long endMillis, int maxPoints) {
+        SimpleDateFormat format = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US);
+        String startText = format.format(new Date(startMillis));
+        String endText = format.format(new Date(endMillis));
+        String[] args = new String[]{startText, endText};
+        Cursor countCursor = getReadableDatabase().rawQuery(
+                "SELECT COUNT(*) FROM log WHERE ts>=? AND ts<?", args);
+        int count;
+        try { countCursor.moveToFirst(); count = countCursor.getInt(0); }
+        finally { countCursor.close(); }
+        int step = Math.max(1, (int) Math.ceil(count / (double) maxPoints));
+        Cursor cursor = getReadableDatabase().rawQuery(
+                "SELECT ts,battery_v FROM log WHERE ts>=? AND ts<? ORDER BY id", args);
+        List<ChartView.Point> result = new ArrayList<ChartView.Point>();
+        int index = 0;
+        try {
+            while (cursor.moveToNext()) {
+                if (index % step == 0 || index == count - 1) {
+                    try { result.add(new ChartView.Point(format.parse(cursor.getString(0)).getTime(), cursor.getFloat(1))); }
+                    catch (Exception ignored) { }
+                }
+                index++;
+            }
+        } finally { cursor.close(); }
+        return result;
+    }
+
     public static String now() { return new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(new Date()); }
 }
