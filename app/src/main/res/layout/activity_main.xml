@@ -1,18 +1,27 @@
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="match_parent"><LinearLayout android:orientation="vertical" android:padding="14dp" android:layout_width="match_parent" android:layout_height="wrap_content">
-<TextView android:text="MidNite Logger" android:textSize="24sp" android:textStyle="bold" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
-<TextView android:id="@+id/state" android:text="● 停止中" android:textSize="18sp" android:paddingTop="8dp" android:layout_width="match_parent" android:layout_height="wrap_content"/>
-<TextView android:id="@+id/current" android:text="バッテリー電圧 --.- V
-Whizbang Jr.電流 --.- A
-PV電圧 --.- V
-PV電力 ---- W
-充電ステージ ---
-最終記録 ---
-未送信 --- 件" android:textSize="20sp" android:lineSpacingExtra="6dp" android:padding="12dp" android:background="#EAF4EE" android:layout_width="match_parent" android:layout_height="wrap_content"/>
-<EditText android:id="@+id/classicIp" android:hint="Classic IP" android:inputType="text" android:layout_width="match_parent" android:layout_height="wrap_content"/>
-<EditText android:id="@+id/loggerSsid" android:hint="ロガー用SSID" android:inputType="text" android:layout_width="match_parent" android:layout_height="wrap_content"/>
-<EditText android:id="@+id/uploadUrl" android:hint="アップロードURL（空欄可）" android:inputType="textUri" android:layout_width="match_parent" android:layout_height="wrap_content"/>
-<Button android:id="@+id/start" android:text="ロギング開始" android:layout_width="match_parent" android:layout_height="wrap_content"/>
-<Button android:id="@+id/stop" android:text="停止" android:layout_width="match_parent" android:layout_height="wrap_content"/>
-<Button android:id="@+id/upload" android:text="今すぐ30秒アップロード" android:layout_width="match_parent" android:layout_height="wrap_content"/>
-<TextView android:id="@+id/events" android:text="イベント履歴" android:textSize="14sp" android:paddingTop="12dp" android:layout_width="match_parent" android:layout_height="wrap_content"/>
-</LinearLayout></ScrollView>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="match_parent">
+    <LinearLayout android:orientation="vertical" android:padding="14dp"
+        android:layout_width="match_parent" android:layout_height="wrap_content">
+        <TextView android:text="MidNite Logger" android:textSize="24sp" android:textStyle="bold"
+            android:layout_width="wrap_content" android:layout_height="wrap_content" />
+        <TextView android:id="@+id/state" android:text="停止中" android:textSize="18sp"
+            android:paddingTop="8dp" android:layout_width="match_parent" android:layout_height="wrap_content" />
+        <TextView android:id="@+id/current" android:text="データ未取得" android:textSize="19sp"
+            android:lineSpacingExtra="5dp" android:padding="12dp" android:background="#EAF4EE"
+            android:layout_width="match_parent" android:layout_height="wrap_content" />
+        <EditText android:id="@+id/classicIp" android:hint="Classic IP" android:inputType="text"
+            android:layout_width="match_parent" android:layout_height="wrap_content" />
+        <EditText android:id="@+id/loggerSsid" android:hint="NETGEAR SSID" android:inputType="text"
+            android:layout_width="match_parent" android:layout_height="wrap_content" />
+        <EditText android:id="@+id/uploadUrl" android:hint="アップロードURL（空欄可）" android:inputType="textUri"
+            android:layout_width="match_parent" android:layout_height="wrap_content" />
+        <Button android:id="@+id/start" android:text="ロギング開始"
+            android:layout_width="match_parent" android:layout_height="wrap_content" />
+        <Button android:id="@+id/stop" android:text="停止"
+            android:layout_width="match_parent" android:layout_height="wrap_content" />
+        <Button android:id="@+id/upload" android:text="今すぐ30秒アップロード"
+            android:layout_width="match_parent" android:layout_height="wrap_content" />
+        <TextView android:id="@+id/events" android:text="イベント履歴" android:textSize="14sp"
+            android:paddingTop="12dp" android:layout_width="match_parent" android:layout_height="wrap_content" />
+    </LinearLayout>
+</ScrollView>

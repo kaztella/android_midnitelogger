@@ -1,8 +1,78 @@
 package jp.terada.midnitelogger;
-import android.app.*; import android.content.*; import android.os.*; import java.text.*; import java.util.*; import java.util.concurrent.*;
-public class LoggerService extends Service { ScheduledExecutorService exec; Database db; SharedPreferences p; volatile boolean uploadNow=false; public void onCreate(){super.onCreate();db=new Database(this);p=getSharedPreferences("cfg",0);p.edit().putBoolean("running",true).apply();startForegroundCompat();exec=Executors.newSingleThreadScheduledExecutor();exec.scheduleWithFixedDelay(new Runnable(){public void run(){cycle();}},0,60,TimeUnit.SECONDS);} public int onStartCommand(Intent i,int f,int id){if(i!=null&&"UPLOAD_NOW".equals(i.getAction()))uploadNow=true;return START_STICKY;} public android.os.IBinder onBind(Intent i){return null;} public void onDestroy(){p.edit().putBoolean("running",false).apply();if(exec!=null)exec.shutdownNow();if(db!=null)db.close();stopForeground(true);super.onDestroy();}
- void startForegroundCompat(){Notification n=new Notification(android.R.drawable.stat_notify_sync,"MidNite Logger",System.currentTimeMillis());PendingIntent pi=PendingIntent.getActivity(this,0,new Intent(this,MainActivity.class),PendingIntent.FLAG_UPDATE_CURRENT);n.setLatestEventInfo(this,"MidNite Logger","Classicロギング中",pi);startForeground(1,n);}
- void cycle(){try{String logger=p.getString("ssid","ClassicLogger"),ip=p.getString("ip","192.168.10.1");WifiController wc=new WifiController(this);if(!wc.connect(logger,20)){db.event("NETGEAR接続失敗");return;}readStore(ip);if(uploadNow||shouldScan()){uploadNow=false;String ext=wc.bestCandidate(logger);if(ext!=null){db.event("外部Wi-Fi検出 "+ext);readStore(ip);if(wc.connect(ext,20)){int sent=Uploader.run(db,p.getString("url",""),30,100);db.event(sent+"件送信");}if(wc.connect(logger,30)){readStore(ip);db.event("NETGEAR復帰・ロギング再開");}else db.event("NETGEAR復帰失敗");}}}catch(Exception e){db.event("ERROR "+e.getClass().getSimpleName()+" "+e.getMessage());}}
- boolean shouldScan(){long now=System.currentTimeMillis(),last=p.getLong("scan",0);if(now-last>Config.SCAN_SEC*1000L){p.edit().putLong("scan",now).apply();return true;}return false;}
- void readStore(String ip)throws Exception{Modbus m=new Modbus();int[] b=m.read(ip,4114,28),w=m.read(ip,4364,7),pr=m.read(ip,4390,1);Record r=new Record();r.ts=new SimpleDateFormat("yyyy-MM-dd HH:mm:ss",Locale.US).format(new Date());r.batteryV=b[0]/10.0;r.pvV=b[1]/10.0;r.classicA=Modbus.s16(b[2])/10.0;r.dailyKwh=b[3]/10.0;r.watts=b[4];r.stage=(b[5]>>8)&255;r.state=b[5]&255;r.pvA=b[6]/10.0;r.dailyAh=b[10];r.lifetimeKwh=Modbus.u32(b[11],b[12]);r.lifetimeAh=Modbus.u32(b[13],b[14]);r.battTemp=Modbus.s16(b[17])/10.0;r.fetTemp=Modbus.s16(b[18])/10.0;r.pcbTemp=Modbus.s16(b[19])/10.0;r.floatSec=b[23];r.wbPosAh=Modbus.u32(w[0],w[1]);r.wbNegAh=Modbus.u32(w[2],w[3]);r.wbNetAh=Modbus.s32(w[4],w[5]);r.wbA=Modbus.s16(w[6])/10.0;r.wbPreciseA=Modbus.s16(pr[0])/100.0;db.insert(r);}
+
+import android.app.Notification;
+import android.app.PendingIntent;
+import android.app.Service;
+import android.content.Intent;
+import android.content.SharedPreferences;
+import android.os.IBinder;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+
+public class LoggerService extends Service {
+    private ScheduledExecutorService executor;
+    private Database database;
+    private SharedPreferences preferences;
+    private volatile boolean uploadNow;
+
+    @Override public void onCreate() {
+        super.onCreate(); database = new Database(this); preferences = getSharedPreferences("cfg", MODE_PRIVATE);
+        preferences.edit().putBoolean("running", true).apply(); startForegroundMode();
+        executor = Executors.newSingleThreadScheduledExecutor();
+        executor.scheduleWithFixedDelay(new Runnable() { @Override public void run() { runCycle(); } }, 0, Config.LOG_INTERVAL_SECONDS, TimeUnit.SECONDS);
+    }
+    @Override public int onStartCommand(Intent intent, int flags, int startId) {
+        if (intent != null && "UPLOAD_NOW".equals(intent.getAction())) uploadNow = true;
+        return START_STICKY;
+    }
+    @Override public IBinder onBind(Intent intent) { return null; }
+    @Override public void onDestroy() {
+        preferences.edit().putBoolean("running", false).apply();
+        if (executor != null) executor.shutdownNow(); if (database != null) database.close(); stopForeground(true); super.onDestroy();
+    }
+    @SuppressWarnings("deprecation") private void startForegroundMode() {
+        Notification notification = new Notification(android.R.drawable.stat_notify_sync, "MidNite Logger", System.currentTimeMillis());
+        PendingIntent pending = PendingIntent.getActivity(this, 0, new Intent(this, MainActivity.class), PendingIntent.FLAG_UPDATE_CURRENT);
+        notification.setLatestEventInfo(this, "MidNite Logger", "Classicロギング中", pending); startForeground(1, notification);
+    }
+    private void runCycle() {
+        try {
+            String loggerSsid = preferences.getString("ssid", "ClassicLogger");
+            String classicIp = preferences.getString("ip", "192.168.10.1");
+            WifiController wifi = new WifiController(this);
+            if (!wifi.connect(loggerSsid, 20)) { database.addEvent("NETGEAR接続失敗"); return; }
+            readAndStore(classicIp);
+            if (uploadNow || scanDue()) {
+                uploadNow = false; String candidate = wifi.bestConfiguredCandidate(loggerSsid);
+                if (candidate != null) {
+                    database.addEvent("外部Wi-Fi検出 " + candidate); readAndStore(classicIp);
+                    if (wifi.connect(candidate, 20)) {
+                        int sent = Uploader.upload(database, preferences.getString("url", ""), Config.UPLOAD_LIMIT_SECONDS, Config.UPLOAD_BATCH_SIZE);
+                        database.addEvent(sent + "件送信");
+                    }
+                    if (wifi.connect(loggerSsid, 30)) { readAndStore(classicIp); database.addEvent("NETGEAR復帰・ロギング再開"); }
+                    else database.addEvent("NETGEAR復帰失敗");
+                }
+            }
+        } catch (Exception e) { database.addEvent("ERROR " + e.getClass().getSimpleName() + " " + String.valueOf(e.getMessage())); }
+    }
+    private boolean scanDue() {
+        long now = System.currentTimeMillis(); long last = preferences.getLong("last_scan", 0);
+        if (now - last > Config.SCAN_INTERVAL_SECONDS * 1000L) { preferences.edit().putLong("last_scan", now).apply(); return true; }
+        return false;
+    }
+    private void readAndStore(String ip) throws Exception {
+        Modbus modbus = new Modbus(); int[] b = modbus.readHoldingRegisters(ip, 4114, 28);
+        int[] w = modbus.readHoldingRegisters(ip, 4364, 7); int[] precise = modbus.readHoldingRegisters(ip, 4390, 1);
+        Record r = new Record(); r.timestamp = Database.now(); r.batteryV = b[0] / 10.0; r.pvV = b[1] / 10.0;
+        r.classicBatteryA = Modbus.signed16(b[2]) / 10.0; r.dailyKwh = b[3] / 10.0; r.watts = b[4];
+        r.chargeStage = (b[5] >> 8) & 0xff; r.classicState = b[5] & 0xff; r.pvA = b[6] / 10.0;
+        r.dailyAh = b[10]; r.lifetimeKwh = Modbus.unsigned32(b[11], b[12]); r.lifetimeAh = Modbus.unsigned32(b[13], b[14]);
+        r.batteryTempC = Modbus.signed16(b[17]) / 10.0; r.fetTempC = Modbus.signed16(b[18]) / 10.0;
+        r.pcbTempC = Modbus.signed16(b[19]) / 10.0; r.floatSeconds = b[23];
+        r.wbPositiveAh = Modbus.unsigned32(w[0], w[1]); r.wbNegativeAh = Modbus.unsigned32(w[2], w[3]);
+        r.wbNetAh = Modbus.signed32(w[4], w[5]); r.wbCurrentA = Modbus.signed16(w[6]) / 10.0;
+        r.wbPreciseA = Modbus.signed16(precise[0]) / 100.0; database.insert(r);
+    }
 }

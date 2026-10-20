@@ -1,1 +1,11 @@
-package jp.terada.midnitelogger; import android.content.*; public class BootReceiver extends BroadcastReceiver { public void onReceive(Context c,Intent i){ c.startService(new Intent(c,LoggerService.class)); } }
+package jp.terada.midnitelogger;
+
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.Intent;
+
+public class BootReceiver extends BroadcastReceiver {
+    @Override public void onReceive(Context context, Intent intent) {
+        context.startService(new Intent(context, LoggerService.class));
+    }
+}

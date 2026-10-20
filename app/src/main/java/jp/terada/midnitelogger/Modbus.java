@@ -1,3 +1,37 @@
 package jp.terada.midnitelogger;
-import java.io.*; import java.net.*;
-public class Modbus { int tx=1; public int[] read(String host,int address,int count)throws IOException{Socket s=new Socket();s.connect(new InetSocketAddress(host,Config.PORT),5000);s.setSoTimeout(5000);DataOutputStream o=new DataOutputStream(s.getOutputStream());DataInputStream i=new DataInputStream(s.getInputStream());int id=(tx++&65535);o.writeShort(id);o.writeShort(0);o.writeShort(6);o.writeByte(Config.UNIT);o.writeByte(3);o.writeShort(address);o.writeShort(count);o.flush();int rid=i.readUnsignedShort();i.readUnsignedShort();i.readUnsignedShort();i.readUnsignedByte();int fn=i.readUnsignedByte();if(fn==131)throw new IOException("Modbus exception "+i.readUnsignedByte());int bytes=i.readUnsignedByte();if(rid!=id||fn!=3||bytes!=count*2)throw new IOException("Bad response");int[] r=new int[count];for(int x=0;x<count;x++)r[x]=i.readUnsignedShort();s.close();return r;} static int s16(int x){return (short)x;} static long u32(int lo,int hi){return ((long)hi<<16)|(lo&65535L);} static long s32(int lo,int hi){return (int)u32(lo,hi);} }
+
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
+import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.net.Socket;
+
+public class Modbus {
+    private int transactionId = 1;
+
+    public int[] readHoldingRegisters(String host, int address, int count) throws IOException {
+        Socket socket = new Socket();
+        try {
+            socket.connect(new InetSocketAddress(host, Config.PORT), 5000);
+            socket.setSoTimeout(5000);
+            DataOutputStream out = new DataOutputStream(socket.getOutputStream());
+            DataInputStream in = new DataInputStream(socket.getInputStream());
+            int id = transactionId++ & 0xffff;
+            out.writeShort(id); out.writeShort(0); out.writeShort(6);
+            out.writeByte(Config.UNIT_ID); out.writeByte(3);
+            out.writeShort(address); out.writeShort(count); out.flush();
+            int responseId = in.readUnsignedShort();
+            in.readUnsignedShort(); in.readUnsignedShort(); in.readUnsignedByte();
+            int function = in.readUnsignedByte();
+            if (function == 0x83) throw new IOException("Modbus exception " + in.readUnsignedByte());
+            int byteCount = in.readUnsignedByte();
+            if (responseId != id || function != 3 || byteCount != count * 2) throw new IOException("Invalid Modbus response");
+            int[] values = new int[count];
+            for (int i = 0; i < count; i++) values[i] = in.readUnsignedShort();
+            return values;
+        } finally { try { socket.close(); } catch (Exception ignored) { } }
+    }
+    public static int signed16(int value) { return (short) value; }
+    public static long unsigned32(int lowWord, int highWord) { return ((long) highWord << 16) | (lowWord & 0xffffL); }
+    public static long signed32(int lowWord, int highWord) { return (int) unsigned32(lowWord, highWord); }
+}
