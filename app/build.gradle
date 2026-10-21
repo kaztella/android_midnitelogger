@@ -8,8 +8,8 @@ android {
         applicationId 'jp.terada.midnitelogger'
         minSdk 14
         targetSdk 28
-        versionCode 7
-        versionName '0.5.0'
+        versionCode 8
+        versionName '0.6.0'
     }
 
     compileOptions {

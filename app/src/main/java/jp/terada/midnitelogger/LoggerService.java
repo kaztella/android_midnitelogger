@@ -19,6 +19,7 @@ public class LoggerService extends Service {
     private Database database;
     private SharedPreferences preferences;
     private volatile boolean uploadNow;
+    private long cycleNumber;
 
     @Override public void onCreate() {
         super.onCreate();
@@ -90,67 +91,119 @@ public class LoggerService extends Service {
     }
 
     private void runCycle() {
+        final long cycle = ++cycleNumber;
         String classicIp = preferences.getString("ip", "192.168.10.1");
         String learnedSsid = preferences.getString("ssid", "");
         WifiController wifi = new WifiController(this);
+        DiagnosticLog.i(this, "===== 周期 #" + cycle + " 開始 =====");
         try {
-            DiagnosticLog.i(this, "周期処理開始 接続先=" + classicIp + ":" + Config.PORT);
-            boolean readOk = false;
-            try {
-                readAndStore(classicIp);
-                readOk = true;
-            } catch (Throwable first) {
-                DiagnosticLog.e(this, "現在のWi-FiでModbus通信失敗 " + describe(first), first);
-                if (learnedSsid.length() > 0) {
-                    DiagnosticLog.i(this, "記憶済みClassic側SSIDへ復帰開始 SSID=" + learnedSsid);
-                    if (wifi.connect(learnedSsid, 30)) {
-                        DiagnosticLog.ok(this, "Classic側Wi-Fi復帰成功 SSID=" + learnedSsid);
+            DiagnosticLog.i(this, "接続先=" + classicIp + ":" + Config.PORT
+                    + " 現在SSID=" + safe(wifi.currentSsid())
+                    + " 端末IP=" + wifi.currentIpAddress());
+
+            boolean readOk = tryReadCurrentNetwork(classicIp);
+            if (!readOk && learnedSsid.length() > 0) {
+                DiagnosticLog.i(this, "記憶済みClassic側SSIDへ復帰開始 SSID=" + learnedSsid);
+                if (wifi.connect(learnedSsid, Config.CLASSIC_RECONNECT_SECONDS)) {
+                    DiagnosticLog.i(this, "SSID接続を確認。Modbus応答で復帰を検証します");
+                    try {
                         readAndStore(classicIp);
                         readOk = true;
-                    } else {
-                        DiagnosticLog.e(this, "Classic側Wi-Fi復帰失敗 SSID=" + learnedSsid, null);
+                        DiagnosticLog.ok(this, "Classic側復帰完了。Modbus応答成功 SSID=" + learnedSsid);
+                    } catch (Throwable verify) {
+                        DiagnosticLog.e(this, "SSIDは一致しましたがModbus検証失敗 " + describe(verify), verify);
                     }
-                } else {
-                    DiagnosticLog.i(this, "Classic側SSIDは未学習です。Classic側Wi-Fiへ手動接続してください");
-                }
-            }
-            if (!readOk) return;
-
-            rememberClassicSsidAfterModbus(wifi);
-            learnedSsid = preferences.getString("ssid", "");
-
-            if (uploadNow || scanDue()) {
-                uploadNow = false;
-                if (learnedSsid.length() == 0) {
-                    DiagnosticLog.e(this, "Classic側SSID未確定のため外部Wi-Fi切替を中止", null);
-                    return;
-                }
-                DiagnosticLog.i(this, "外部Wi-Fi探索開始");
-                String candidate = wifi.bestConfiguredCandidate(learnedSsid);
-                if (candidate == null) {
-                    DiagnosticLog.i(this, "アップロード可能な外部Wi-Fiなし、またはWi-Fi探索権限なし");
-                    return;
-                }
-                DiagnosticLog.i(this, "外部Wi-Fi検出 SSID=" + candidate);
-                readAndStore(classicIp);
-                if (wifi.connect(candidate, 20)) {
-                    DiagnosticLog.ok(this, "外部Wi-Fi接続成功 SSID=" + candidate);
-                    int sent = Uploader.upload(database, preferences.getString("url", ""),
-                            Config.UPLOAD_LIMIT_SECONDS, Config.UPLOAD_BATCH_SIZE);
-                    DiagnosticLog.ok(this, sent + "件送信");
-                } else {
-                    DiagnosticLog.e(this, "外部Wi-Fi接続失敗 SSID=" + candidate, null);
-                }
-                if (wifi.connect(learnedSsid, 30)) {
-                    DiagnosticLog.ok(this, "Classic側Wi-Fi復帰成功 SSID=" + learnedSsid);
-                    readAndStore(classicIp);
                 } else {
                     DiagnosticLog.e(this, "Classic側Wi-Fi復帰失敗 SSID=" + learnedSsid, null);
                 }
+            } else if (!readOk) {
+                DiagnosticLog.i(this, "Classic側SSIDは未学習です。Classic側Wi-Fiへ手動接続してください");
+            }
+
+            if (!readOk) {
+                DiagnosticLog.e(this, "周期 #" + cycle + " は未記録。次周期で再試行します", null);
+                return;
+            }
+
+            rememberClassicSsidAfterModbus(wifi);
+
+            // 自動探索は行わない。アップロードボタンの明示操作時だけWi-Fiを切り替える。
+            if (uploadNow) {
+                uploadNow = false;
+                performManualUpload(classicIp, wifi);
             }
         } catch (Throwable t) {
             DiagnosticLog.e(this, "周期処理失敗 " + describe(t), t);
+        } finally {
+            DiagnosticLog.i(this, "===== 周期 #" + cycle + " 完了・次回まで"
+                    + Config.LOG_INTERVAL_SECONDS + "秒 =====");
         }
+    }
+
+    private boolean tryReadCurrentNetwork(String classicIp) {
+        try {
+            readAndStore(classicIp);
+            return true;
+        } catch (Throwable first) {
+            DiagnosticLog.e(this, "現在のWi-FiでModbus通信失敗 " + describe(first), first);
+            return false;
+        }
+    }
+
+    private void performManualUpload(String classicIp, WifiController wifi) {
+        String learnedSsid = preferences.getString("ssid", "");
+        String url = preferences.getString("url", "").trim();
+        if (learnedSsid.length() == 0) {
+            DiagnosticLog.e(this, "Classic側SSID未確定のため外部Wi-Fi切替を中止", null);
+            return;
+        }
+        if (url.length() == 0) {
+            DiagnosticLog.e(this, "アップロードURL未設定のためWi-Fi切替を中止", null);
+            return;
+        }
+
+        try {
+            DiagnosticLog.i(this, "手動アップロード: 外部Wi-Fi探索開始");
+            String candidate = wifi.bestConfiguredCandidate(learnedSsid);
+            if (candidate == null) {
+                DiagnosticLog.i(this, "アップロード可能な外部Wi-Fiなし、またはWi-Fi探索権限なし");
+                return;
+            }
+            DiagnosticLog.i(this, "外部Wi-Fi検出 SSID=" + candidate);
+            if (!wifi.connect(candidate, 20)) {
+                DiagnosticLog.e(this, "外部Wi-Fi接続失敗 SSID=" + candidate, null);
+                return;
+            }
+
+            DiagnosticLog.ok(this, "外部Wi-Fi接続成功 SSID=" + candidate
+                    + " 端末IP=" + wifi.currentIpAddress());
+            int sent = Uploader.upload(database, url,
+                    Config.UPLOAD_LIMIT_SECONDS, Config.UPLOAD_BATCH_SIZE);
+            DiagnosticLog.ok(this, sent + "件送信");
+        } catch (Throwable uploadError) {
+            DiagnosticLog.e(this, "アップロード処理失敗 " + describe(uploadError), uploadError);
+        } finally {
+            restoreAndVerifyClassic(classicIp, learnedSsid, wifi);
+        }
+    }
+
+    private void restoreAndVerifyClassic(String classicIp, String learnedSsid, WifiController wifi) {
+        try {
+            DiagnosticLog.i(this, "Classic側Wi-Fi復帰開始 SSID=" + learnedSsid);
+            if (!wifi.connect(learnedSsid, Config.CLASSIC_RECONNECT_SECONDS)) {
+                DiagnosticLog.e(this, "Classic側Wi-Fi復帰失敗。端末は外部ネットワークのまま可能性あり", null);
+                return;
+            }
+            DiagnosticLog.i(this, "SSID復帰確認。Modbus応答で最終検証します 端末IP=" + wifi.currentIpAddress());
+            readAndStore(classicIp);
+            DiagnosticLog.ok(this, "Classic側復帰完了。Modbus応答・SQLite保存成功");
+        } catch (Throwable restoreError) {
+            DiagnosticLog.e(this, "Classic側復帰検証失敗 " + describe(restoreError), restoreError);
+        }
+    }
+
+    private static String safe(String value) {
+        return value == null || value.length() == 0 ? "取得不可" : value;
     }
 
     private void rememberClassicSsidAfterModbus(WifiController wifi) {
@@ -167,16 +220,6 @@ public class LoggerService extends Service {
         } else {
             DiagnosticLog.e(this, "Modbus通信は成功しましたがSSID取得不可。アプリの位置情報/付近のデバイス権限を許可してください。UNKNOWN_SSIDは保存しません", null);
         }
-    }
-
-    private boolean scanDue() {
-        long now = System.currentTimeMillis();
-        long last = preferences.getLong("last_scan", 0);
-        if (now - last > Config.SCAN_INTERVAL_SECONDS * 1000L) {
-            preferences.edit().putLong("last_scan", now).apply();
-            return true;
-        }
-        return false;
     }
 
     private void readAndStore(String ip) throws Exception {

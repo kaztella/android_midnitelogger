@@ -28,6 +28,17 @@ public class WifiController {
         } catch (SecurityException e) { return null; }
     }
 
+
+    public String currentIpAddress() {
+        try {
+            WifiInfo info = wifi == null ? null : wifi.getConnectionInfo();
+            if (info == null || info.getIpAddress() == 0) return "取得不可";
+            int ip = info.getIpAddress();
+            return (ip & 0xff) + "." + ((ip >> 8) & 0xff) + "."
+                    + ((ip >> 16) & 0xff) + "." + ((ip >> 24) & 0xff);
+        } catch (Exception e) { return "取得不可"; }
+    }
+
     public boolean isLocationServiceEnabled() {
         if (android.os.Build.VERSION.SDK_INT < 23) return true;
         try {
