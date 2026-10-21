@@ -3,17 +3,12 @@ plugins { id 'com.android.application' }
 android {
     namespace 'jp.terada.midnitelogger'
     compileSdk 35
-
     defaultConfig {
         applicationId 'jp.terada.midnitelogger'
         minSdk 14
         targetSdk 28
         versionCode 8
-        versionName '0.6.0'
+        versionName '0.7.0'
     }
-
-    compileOptions {
-        sourceCompatibility JavaVersion.VERSION_1_8
-        targetCompatibility JavaVersion.VERSION_1_8
-    }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_1_8; targetCompatibility JavaVersion.VERSION_1_8 }
 }
