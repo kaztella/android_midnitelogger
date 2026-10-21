@@ -1,0 +1,2 @@
+package jp.terada.midnitelogger; import java.text.*; import java.util.*;
+public final class Time {private Time(){} public static String now(){return new SimpleDateFormat("yyyy-MM-dd HH:mm:ss",Locale.US).format(new Date());} public static String iso(){return new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX",Locale.US).format(new Date());} public static String fileStamp(){return new SimpleDateFormat("yyyyMMdd_HHmmss",Locale.US).format(new Date());}}

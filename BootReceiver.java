@@ -1,0 +1,1 @@
+package jp.terada.midnitelogger; import android.content.*; public class BootReceiver extends BroadcastReceiver{public void onReceive(Context c,Intent i){if(c.getSharedPreferences(Config.PREFS,0).getBoolean("autostart",false))c.startService(new Intent(c,LoggerService.class));}}
