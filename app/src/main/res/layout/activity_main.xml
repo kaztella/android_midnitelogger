@@ -54,7 +54,14 @@
             android:layout_width="match_parent"
             android:layout_height="280dp"
             android:layout_marginTop="6dp" />
-        <TextView android:id="@+id/events" android:text="イベント履歴" android:textSize="14sp"
+        <TextView android:text="通信ログ（直近50件）" android:textStyle="bold"
+            android:paddingTop="12dp" android:layout_width="match_parent" android:layout_height="wrap_content" />
+        <LinearLayout android:orientation="horizontal" android:layout_width="match_parent" android:layout_height="wrap_content">
+            <Button android:id="@+id/refreshLog" android:text="ログ更新" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" />
+            <Button android:id="@+id/clearLog" android:text="ログ消去" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" />
+        </LinearLayout>
+        <TextView android:id="@+id/events" android:text="通信ログなし" android:textSize="14sp"
+            android:textIsSelectable="true" android:typeface="monospace"
             android:paddingTop="12dp" android:layout_width="match_parent" android:layout_height="wrap_content" />
     </LinearLayout>
 </ScrollView>

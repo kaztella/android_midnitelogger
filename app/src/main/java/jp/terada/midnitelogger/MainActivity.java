@@ -7,6 +7,8 @@ import android.os.Bundle;
 import android.view.View;
 import android.widget.EditText;
 import android.widget.TextView;
+import android.widget.Button;
+import android.widget.Toast;
 import android.widget.RadioButton;
 import java.text.SimpleDateFormat;
 import java.util.Calendar;
@@ -16,6 +18,7 @@ import java.util.Locale;
 public class MainActivity extends Activity {
     private SharedPreferences preferences;
     private TextView stateView, currentView, eventsView, chartPeriodView;
+    private Button startButton, stopButton, uploadButton;
     private ChartView chartView;
     private EditText chartDateView, chartTimeView;
     private RadioButton fromSelectedView;
@@ -32,6 +35,9 @@ public class MainActivity extends Activity {
         stateView = (TextView) findViewById(R.id.state);
         currentView = (TextView) findViewById(R.id.current);
         eventsView = (TextView) findViewById(R.id.events);
+        startButton = (Button) findViewById(R.id.start);
+        stopButton = (Button) findViewById(R.id.stop);
+        uploadButton = (Button) findViewById(R.id.upload);
         chartView = (ChartView) findViewById(R.id.chart);
         chartDateView = (EditText) findViewById(R.id.chartDate);
         chartTimeView = (EditText) findViewById(R.id.chartTime);
@@ -44,20 +50,45 @@ public class MainActivity extends Activity {
         ip.setText(preferences.getString("ip", "192.168.10.1"));
         ssid.setText(preferences.getString("ssid", "ClassicLogger"));
         url.setText(preferences.getString("url", ""));
-        findViewById(R.id.start).setOnClickListener(new View.OnClickListener() {
+        startButton.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View view) {
+                if (preferences.getBoolean("running", false)) {
+                    Toast.makeText(MainActivity.this, "すでにロギング中です", Toast.LENGTH_SHORT).show();
+                    return;
+                }
                 preferences.edit().putString("ip", ip.getText().toString().trim())
                         .putString("ssid", ssid.getText().toString().trim())
                         .putString("url", url.getText().toString().trim()).apply();
-                startService(new Intent(MainActivity.this, LoggerService.class).setAction("START"));
+                DiagnosticLog.i(MainActivity.this, "ロギング開始ボタン押下");
+                try { startService(new Intent(MainActivity.this, LoggerService.class).setAction("START")); }
+                catch (Throwable t) { DiagnosticLog.e(MainActivity.this, "Service開始要求失敗 " + t.getClass().getSimpleName(), t); }
                 refresh();
             }
         });
-        findViewById(R.id.stop).setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View view) { stopService(new Intent(MainActivity.this, LoggerService.class)); refresh(); }
+        stopButton.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View view) {
+                DiagnosticLog.i(MainActivity.this, "停止ボタン押下");
+                stopService(new Intent(MainActivity.this, LoggerService.class));
+                preferences.edit().putBoolean("running", false).apply(); refresh();
+            }
         });
-        findViewById(R.id.upload).setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View view) { startService(new Intent(MainActivity.this, LoggerService.class).setAction("UPLOAD_NOW")); }
+        uploadButton.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View view) {
+                DiagnosticLog.i(MainActivity.this, "今すぐ30秒アップロードボタン押下");
+                try { startService(new Intent(MainActivity.this, LoggerService.class).setAction("UPLOAD_NOW")); }
+                catch (Throwable t) { DiagnosticLog.e(MainActivity.this, "アップロード要求失敗 " + t.getClass().getSimpleName(), t); }
+                refresh();
+            }
+        });
+        findViewById(R.id.refreshLog).setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View view) { refresh(); }
+        });
+        findViewById(R.id.clearLog).setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View view) {
+                Database db = new Database(MainActivity.this);
+                try { db.clearEvents(); } finally { db.close(); }
+                refresh();
+            }
         });
         findViewById(R.id.refreshChart).setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View view) { refreshChart(); }
@@ -74,9 +105,14 @@ public class MainActivity extends Activity {
         Database db = new Database(this);
         try {
             Record r = db.latest();
-            stateView.setText(preferences.getBoolean("running", false) ? "ロギング中" : "停止中");
-            if (r != null) currentView.setText("バッテリー電圧  " + r.batteryV + " V\nWhizbang Jr.電流  " + r.wbCurrentA + " A\nPV電圧  " + r.pvV + " V\nPV電力  " + r.watts + " W\n充電ステージ  " + r.chargeStage + "\n最終記録  " + r.timestamp + "\n未送信  " + db.pendingCount() + " 件");
-            eventsView.setText(db.recentEvents());
+            boolean running = preferences.getBoolean("running", false);
+            stateView.setText(running ? "ロギング中" : "停止中");
+            startButton.setEnabled(!running);
+            stopButton.setEnabled(running);
+            if (r == null) currentView.setText("データ未取得");
+            else currentView.setText("バッテリー電圧  " + r.batteryV + " V\nWhizbang Jr.電流  " + r.wbCurrentA + " A\nPV電圧  " + r.pvV + " V\nPV電力  " + r.watts + " W\n充電ステージ  " + r.chargeStage + "\n最終記録  " + r.timestamp + "\n未送信  " + db.pendingCount() + " 件");
+            String logsText = db.recentEvents();
+            eventsView.setText(logsText.length() == 0 ? "通信ログなし" : logsText);
         } finally { db.close(); }
     }
     private long parseChartBase() throws Exception {

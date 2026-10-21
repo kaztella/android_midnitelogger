@@ -1,4 +1,12 @@
-# MidNite Logger for SHL24
-Android 4.2.2 compatible logger.
+# MidNite Logger for SHL24 / Galaxy
 
-Version 0.3.0 adds an offline 24-hour battery-voltage chart with a selectable base date/time. The user can display either the 24 hours beginning at the selected time or the 24 hours ending at the selected time. Previous-day and next-day buttons are included. No chart library is used; SQLite results are downsampled to at most 240 points.
+Version 0.4.0
+
+- Android 8.0+ notification channel support while retaining Android 4.2.2 compatibility.
+- In-app communication diagnostics stored in SQLite and shown as the latest 50 entries.
+- TCP connect, Modbus request/response, decoded values, SQLite save, Wi-Fi transitions, upload events, and exceptions are logged.
+- Refresh/Clear log buttons.
+- Duplicate logging-start prevention and consistent Start/Stop button state.
+- Selectable 24-hour offline battery-voltage chart retained.
+
+Build target: compileSdk 35, minSdk 14, targetSdk 28.

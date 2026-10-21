@@ -34,6 +34,11 @@ public class Database extends SQLiteOpenHelper {
         v.put("ts", now()); v.put("msg", message);
         getWritableDatabase().insert("event", null, v);
     }
+    public void clearEvents() { getWritableDatabase().delete("event", null, null); }
+    public void trimEvents(int keep) {
+        getWritableDatabase().execSQL("DELETE FROM event WHERE id NOT IN (SELECT id FROM event ORDER BY id DESC LIMIT " + keep + ")");
+    }
+
     public int pendingCount() {
         Cursor c = getReadableDatabase().rawQuery("SELECT COUNT(*) FROM log WHERE uploaded=0", null);
         try { c.moveToFirst(); return c.getInt(0); } finally { c.close(); }
@@ -48,7 +53,7 @@ public class Database extends SQLiteOpenHelper {
         } finally { c.close(); }
     }
     public String recentEvents() {
-        Cursor c = getReadableDatabase().rawQuery("SELECT ts,msg FROM event ORDER BY id DESC LIMIT 8", null);
+        Cursor c = getReadableDatabase().rawQuery("SELECT ts,msg FROM event ORDER BY id DESC LIMIT 50", null);
         StringBuilder b = new StringBuilder("イベント履歴\n");
         try { while (c.moveToNext()) b.append(c.getString(0)).append("  ").append(c.getString(1)).append('\n'); }
         finally { c.close(); }
