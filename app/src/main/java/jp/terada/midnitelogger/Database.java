@@ -17,8 +17,24 @@ public class Database extends SQLiteOpenHelper {
  private Record from(Cursor c){Record r=new Record();r.id=c.getLong(c.getColumnIndex("id"));r.ts=c.getString(c.getColumnIndex("ts"));r.batteryV=c.getDouble(c.getColumnIndex("battery_v"));r.pvV=c.getDouble(c.getColumnIndex("pv_v"));r.classicA=c.getDouble(c.getColumnIndex("classic_a"));r.pvA=c.getDouble(c.getColumnIndex("pv_a"));r.watts=c.getInt(c.getColumnIndex("watts"));r.dailyKwh=c.getDouble(c.getColumnIndex("daily_kwh"));r.chargeStage=c.getInt(c.getColumnIndex("charge_stage"));r.classicState=c.getInt(c.getColumnIndex("classic_state"));r.batteryTemp=c.getDouble(c.getColumnIndex("batt_temp"));r.fetTemp=c.getDouble(c.getColumnIndex("fet_temp"));r.pcbTemp=c.getDouble(c.getColumnIndex("pcb_temp"));r.wbA=c.getDouble(c.getColumnIndex("wb_a"));r.wbPreciseA=c.getDouble(c.getColumnIndex("wb_precise_a"));return r;}
  public List<Record> pending(int n){ArrayList<Record> a=new ArrayList<Record>();Cursor c=getReadableDatabase().rawQuery("SELECT * FROM log WHERE uploaded=0 ORDER BY id LIMIT "+n,null);try{while(c.moveToNext())a.add(from(c));}finally{c.close();}return a;}
  public void markUploaded(List<Record> rows){if(rows.isEmpty())return;long max=rows.get(rows.size()-1).id;ContentValues v=new ContentValues();v.put("uploaded",1);getWritableDatabase().update("log",v,"id<=? AND uploaded=0",new String[]{String.valueOf(max)});}
- public String recentEvents(int n){StringBuilder s=new StringBuilder();Cursor c=getReadableDatabase().rawQuery("SELECT ts,level,message FROM event ORDER BY id DESC LIMIT "+n,null);try{while(c.moveToNext())s.append(c.getString(0)).append(" [").append(c.getString(1)).append("] ").append(c.getString(2)).append('
-');}finally{c.close();}return s.toString();}
+ public String recentEvents(int n) {
+  StringBuilder builder = new StringBuilder();
+  Cursor cursor = getReadableDatabase().rawQuery(
+      "SELECT ts,level,message FROM event ORDER BY id DESC LIMIT " + n, null);
+  try {
+   while (cursor.moveToNext()) {
+    builder.append(cursor.getString(0))
+        .append(" [")
+        .append(cursor.getString(1))
+        .append("] ")
+        .append(cursor.getString(2))
+        .append("\n");
+   }
+  } finally {
+   cursor.close();
+  }
+  return builder.toString();
+ }
  public long count(){Cursor c=getReadableDatabase().rawQuery("SELECT count(*) FROM log",null);try{c.moveToFirst();return c.getLong(0);}finally{c.close();}}
  public long errorCount(){Cursor c=getReadableDatabase().rawQuery("SELECT count(*) FROM event WHERE level='ERROR'",null);try{c.moveToFirst();return c.getLong(0);}finally{c.close();}}
  public long dbBytes(){return ctx.getDatabasePath(NAME).length();}
