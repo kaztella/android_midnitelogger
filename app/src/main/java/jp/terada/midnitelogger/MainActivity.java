@@ -1,9 +1,12 @@
 package jp.terada.midnitelogger;
 
+import android.Manifest;
 import android.app.Activity;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.os.Bundle;
+import android.os.Build;
+import android.content.pm.PackageManager;
 import android.view.View;
 import android.widget.EditText;
 import android.widget.TextView;
@@ -16,6 +19,7 @@ import java.util.Date;
 import java.util.Locale;
 
 public class MainActivity extends Activity {
+    private static final int WIFI_PERMISSION_REQUEST = 1001;
     private SharedPreferences preferences;
     private TextView stateView, currentView, eventsView, chartPeriodView;
     private Button startButton, stopButton, uploadButton;
@@ -29,6 +33,7 @@ public class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
         preferences = getSharedPreferences("cfg", MODE_PRIVATE);
+        requestWifiIdentityPermissionsIfNeeded();
         final EditText ip = (EditText) findViewById(R.id.classicIp);
         final EditText ssid = (EditText) findViewById(R.id.loggerSsid);
         final EditText url = (EditText) findViewById(R.id.uploadUrl);
@@ -48,7 +53,7 @@ public class MainActivity extends Activity {
         initial.set(Calendar.SECOND, 0); initial.set(Calendar.MILLISECOND, 0);
         setChartBase(initial.getTimeInMillis());
         ip.setText(preferences.getString("ip", "192.168.10.1"));
-        ssid.setText(preferences.getString("ssid", "ClassicLogger"));
+        ssid.setText(preferences.getString("ssid", ""));
         url.setText(preferences.getString("url", ""));
         startButton.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View view) {
@@ -152,6 +157,32 @@ public class MainActivity extends Activity {
             chartPeriodView.setText("日時は yyyy-MM-dd / HH:mm で入力してください");
             chartView.setSeries("バッテリー電圧", "V", null);
         } finally { db.close(); }
+    }
+
+    private void requestWifiIdentityPermissionsIfNeeded() {
+        if (Build.VERSION.SDK_INT < 23) return;
+        java.util.ArrayList<String> missing = new java.util.ArrayList<String>();
+        if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED)
+            missing.add(Manifest.permission.ACCESS_FINE_LOCATION);
+        if (checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED)
+            missing.add(Manifest.permission.ACCESS_COARSE_LOCATION);
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.NEARBY_WIFI_DEVICES) != PackageManager.PERMISSION_GRANTED)
+            missing.add(Manifest.permission.NEARBY_WIFI_DEVICES);
+        if (!missing.isEmpty()) requestPermissions(missing.toArray(new String[missing.size()]), WIFI_PERMISSION_REQUEST);
+    }
+
+    @Override public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode != WIFI_PERMISSION_REQUEST) return;
+        boolean granted = true;
+        for (int result : grantResults) if (result != PackageManager.PERMISSION_GRANTED) granted = false;
+        if (granted) {
+            DiagnosticLog.ok(this, "SSID取得用の位置情報/付近のデバイス権限を取得");
+            Toast.makeText(this, "Wi-Fi識別権限を許可しました", Toast.LENGTH_SHORT).show();
+        } else {
+            DiagnosticLog.e(this, "SSID取得権限が拒否されました。Modbus記録は継続しますがSSID自動学習はできません", null);
+            Toast.makeText(this, "SSID自動学習には権限の許可が必要です", Toast.LENGTH_LONG).show();
+        }
     }
 
 }

@@ -90,24 +90,45 @@ public class LoggerService extends Service {
     }
 
     private void runCycle() {
-        String loggerSsid = preferences.getString("ssid", "ClassicLogger");
         String classicIp = preferences.getString("ip", "192.168.10.1");
+        String learnedSsid = preferences.getString("ssid", "");
+        WifiController wifi = new WifiController(this);
         try {
-            DiagnosticLog.i(this, "周期処理開始 接続先=" + classicIp + ":" + Config.PORT + " SSID=" + loggerSsid);
-            WifiController wifi = new WifiController(this);
-            DiagnosticLog.i(this, "ロガーWi-Fi接続開始 SSID=" + loggerSsid);
-            if (!wifi.connect(loggerSsid, 20)) {
-                DiagnosticLog.e(this, "ロガーWi-Fi接続失敗 SSID=" + loggerSsid, null);
-                return;
+            DiagnosticLog.i(this, "周期処理開始 接続先=" + classicIp + ":" + Config.PORT);
+            boolean readOk = false;
+            try {
+                readAndStore(classicIp);
+                readOk = true;
+            } catch (Throwable first) {
+                DiagnosticLog.e(this, "現在のWi-FiでModbus通信失敗 " + describe(first), first);
+                if (learnedSsid.length() > 0) {
+                    DiagnosticLog.i(this, "記憶済みClassic側SSIDへ復帰開始 SSID=" + learnedSsid);
+                    if (wifi.connect(learnedSsid, 30)) {
+                        DiagnosticLog.ok(this, "Classic側Wi-Fi復帰成功 SSID=" + learnedSsid);
+                        readAndStore(classicIp);
+                        readOk = true;
+                    } else {
+                        DiagnosticLog.e(this, "Classic側Wi-Fi復帰失敗 SSID=" + learnedSsid, null);
+                    }
+                } else {
+                    DiagnosticLog.i(this, "Classic側SSIDは未学習です。Classic側Wi-Fiへ手動接続してください");
+                }
             }
-            DiagnosticLog.ok(this, "ロガーWi-Fi接続成功 SSID=" + loggerSsid);
-            readAndStore(classicIp);
+            if (!readOk) return;
+
+            rememberClassicSsidAfterModbus(wifi);
+            learnedSsid = preferences.getString("ssid", "");
+
             if (uploadNow || scanDue()) {
                 uploadNow = false;
+                if (learnedSsid.length() == 0) {
+                    DiagnosticLog.e(this, "Classic側SSID未確定のため外部Wi-Fi切替を中止", null);
+                    return;
+                }
                 DiagnosticLog.i(this, "外部Wi-Fi探索開始");
-                String candidate = wifi.bestConfiguredCandidate(loggerSsid);
+                String candidate = wifi.bestConfiguredCandidate(learnedSsid);
                 if (candidate == null) {
-                    DiagnosticLog.i(this, "アップロード可能な外部Wi-Fiなし");
+                    DiagnosticLog.i(this, "アップロード可能な外部Wi-Fiなし、またはWi-Fi探索権限なし");
                     return;
                 }
                 DiagnosticLog.i(this, "外部Wi-Fi検出 SSID=" + candidate);
@@ -120,15 +141,31 @@ public class LoggerService extends Service {
                 } else {
                     DiagnosticLog.e(this, "外部Wi-Fi接続失敗 SSID=" + candidate, null);
                 }
-                if (wifi.connect(loggerSsid, 30)) {
-                    DiagnosticLog.ok(this, "ロガーWi-Fi復帰成功");
+                if (wifi.connect(learnedSsid, 30)) {
+                    DiagnosticLog.ok(this, "Classic側Wi-Fi復帰成功 SSID=" + learnedSsid);
                     readAndStore(classicIp);
                 } else {
-                    DiagnosticLog.e(this, "ロガーWi-Fi復帰失敗", null);
+                    DiagnosticLog.e(this, "Classic側Wi-Fi復帰失敗 SSID=" + learnedSsid, null);
                 }
             }
         } catch (Throwable t) {
             DiagnosticLog.e(this, "周期処理失敗 " + describe(t), t);
+        }
+    }
+
+    private void rememberClassicSsidAfterModbus(WifiController wifi) {
+        String ssid = wifi.currentSsid();
+        if (ssid != null && ssid.length() > 0) {
+            String old = preferences.getString("ssid", "");
+            preferences.edit().putString("ssid", ssid).apply();
+            if (!ssid.equals(old)) DiagnosticLog.ok(this, "Modbus通信成功を確認。Classic側SSIDとして記憶 SSID=" + ssid);
+            else DiagnosticLog.i(this, "Modbus通信成功。Classic側SSID確認 SSID=" + ssid);
+            return;
+        }
+        if (!wifi.isLocationServiceEnabled()) {
+            DiagnosticLog.e(this, "Modbus通信は成功しましたがSSID取得不可。端末の位置情報をONにしてください。UNKNOWN_SSIDは保存しません", null);
+        } else {
+            DiagnosticLog.e(this, "Modbus通信は成功しましたがSSID取得不可。アプリの位置情報/付近のデバイス権限を許可してください。UNKNOWN_SSIDは保存しません", null);
         }
     }
 
