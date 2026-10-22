@@ -239,11 +239,26 @@ public class MainActivity extends Activity {
     }
 
     private void mergeLatestBackup() {
-        File directory;
-        try {
-            directory = db.backupDirectory();
-        } catch (Exception ex) {
-            Toast.makeText(this, ex.toString(), Toast.LENGTH_LONG).show();
+        File base = getExternalFilesDir(null);
+        
+        if (base == null) {
+            Toast.makeText(
+                    this,
+                    "外部ストレージを利用できません",
+                    Toast.LENGTH_LONG
+            ).show();
+            return;
+        }
+        
+        File directory = new File(base, "MidniteLogger");
+        
+        if (!directory.exists() && !directory.mkdirs()) {
+            Toast.makeText(
+                    this,
+                    "バックアップフォルダーを作成できません: "
+                            + directory.getAbsolutePath(),
+                    Toast.LENGTH_LONG
+            ).show();
             return;
         }
         File[] files = directory.listFiles();
