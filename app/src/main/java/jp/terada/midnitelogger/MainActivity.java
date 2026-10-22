@@ -7,7 +7,6 @@ import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.os.Build;
 import android.os.Bundle;
-import android.os.Environment;
 import android.os.Handler;
 import android.view.View;
 import android.widget.ArrayAdapter;
@@ -18,7 +17,6 @@ import android.widget.ScrollView;
 import android.widget.Spinner;
 import android.widget.TextView;
 import android.widget.Toast;
-
 import java.io.File;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -118,8 +116,8 @@ public class MainActivity extends Activity {
         addButton(dbRow, "DB統合", new View.OnClickListener() {
             @Override public void onClick(View view) { mergeLatestBackup(); }
         });
-        storage = addText(root, "");
 
+        storage = addText(root, "");
         addText(root, "グラフ項目");
         metric = new Spinner(this);
         String[] names = new String[]{
@@ -187,7 +185,6 @@ public class MainActivity extends Activity {
         boolean running = getSharedPreferences(Config.PREFS, 0)
                 .getBoolean("running", false);
         status.setText(running ? "ロギング中" : "停止中");
-
         Record record = db.latest();
         if (record == null) {
             values.setText("データ未取得");
@@ -226,8 +223,10 @@ public class MainActivity extends Activity {
         Date end = new Date();
         Date start = new Date(end.getTime() - 86400000L);
         SimpleDateFormat format = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US);
-        List<float[]> points = db.chart(columns[index], format.format(start), format.format(end), 240);
-        chart.set(points, metric.getSelectedItem() + " [" + units[index] + "]");
+        List<float[]> points = db.chart(
+                columns[index], format.format(start), format.format(end), 240);
+        chart.set(points, metric.getSelectedItem() + " [" + units[index] + "]",
+                start.getTime(), end.getTime());
     }
 
     private void backupDatabase() {
@@ -240,7 +239,13 @@ public class MainActivity extends Activity {
     }
 
     private void mergeLatestBackup() {
-        File directory = new File(Environment.getExternalStorageDirectory(), "MidniteLogger");
+        File directory;
+        try {
+            directory = db.backupDirectory();
+        } catch (Exception ex) {
+            Toast.makeText(this, ex.toString(), Toast.LENGTH_LONG).show();
+            return;
+        }
         File[] files = directory.listFiles();
         if (files == null || files.length == 0) {
             Toast.makeText(this, "バックアップなし", Toast.LENGTH_SHORT).show();
