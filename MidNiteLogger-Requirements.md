@@ -1,6 +1,6 @@
 # MidNite Logger 要求仕様書
 
-- 文書版数: 1.1
+- 文書版数: 1.2
 - 作成日: 2026-10-23
 - 対象アプリ: MidNite Logger
 - 現行アプリ版数: 0.7.2
@@ -13,7 +13,7 @@ MidNite Solar Classic 150からModbus TCPで発電・充電関連データを定
 
 外部インターネットへ接続できるときだけ、保存済みデータをSupabaseへ安全にアップロードし、将来的にWebダッシュボードから閲覧・分析できるようにする。
 
-本システムでは、リアルタイ��性よりも次を優先する。
+本システムでは、リアルタイム性よりも次を優先する。
 
 1. 測定データを失わないこと
 2. Classicとのローカル通信とSQLite保存を止めないこと
@@ -451,14 +451,60 @@ Androidアプリ用`anon`権限:
 
 ---
 
-## 11. Wi-Fi・アップロード運用
+## 11. Wi‑Fi・アップロード運用
 
-- Classic側Wi-Fi接続中はModbusロギングを優先する。
-- 外部Wi-Fiまたはインターネット接続時にだけSupabaseへ送信する。
+- Classic側Wi‑Fi接続中はModbusロギングを優先する。
+- 外部Wi‑Fiまたはインターネット接続時にだけSupabaseへ送信する。
 - クラウド送信のために長時間Classic通信を止めない。
-- 外部Wi-Fi接続後の送信は短時間で完了させる。
+- 外部Wi‑Fi接続後の送信は短時間で完了させる。
 - 送信後はClassic側ネットワークへ戻し、Modbus通信確認後に通常ロギングへ復帰する設計を目標とする。
-- 新しいAndroidではWi-Fi自動切替制限があるため、端末世代ごとに挙動を分ける。
+- 新しいAndroidではWi‑Fi自動切替制限があるため、端末世代ごとに挙動を分ける。
+
+### 11.1 NETGEARと外部Wi‑Fiの役割分離
+
+- 通常運用ではNETGEARをClassicとのローカル接続に使用する。
+- `classic_wifi_ssid`は常時接続先として保存し、Classic Modbus TCPでの通信を行うWi‑Fiとする。
+- 外部Wi‑Fiはクラウドアップロード用のインターネット接続先として使用する。
+- 外部Wi‑Fiは設定されたSSIDリストと一致した時だけ利用する。
+- 外部Wi‑Fiでのアップロード中にClassic Modbus通信を止めないよう、Classic通信とインターネット通信の役割を分離する。
+
+### 11.2 Wi‑Fi切替動作
+
+- アプリは現在の接続SSIDを確認し、`classic_wifi_ssid`と比較する。
+- `classic_wifi_ssid`に接続しているときはClassicへ通常ロギングを続ける。
+- `upload_wifi_ssids`に含まれるSSIDへ切り替わった場合、Supabase uploadを優先実行する。
+- upload成功後、またはタイムアウト後に自動で`classic_wifi_ssid`へ戻す。
+- `classic_wifi_ssid`復帰後はClassicのModbus通信が応答するか確認し、応答が確認できた時点で通常ロギングへ戻す。
+- 切替中にClassic通信が失敗しても、ローカルデータ保存は止めず、次回周期で再試行する。
+
+### 11.3 外部Wi‑Fi設定UI
+
+- MainActivityに次の設定項目を追加する。
+  - `classic_wifi_ssid`（例: `NETGEAR`）
+  - `upload_wifi_ssids`（カンマ区切りのSSIDリスト、例: `HomeWiFi,OfficeWiFi`）
+  - 現在アプリが認識しているWi‑Fi SSID
+  - 最終Wi‑Fi切替時刻
+- 端末設定からSSIDを直接入力できるようにし、保存時に`trim()`と重複排除を行う。
+- UIには「現在の接続先」「NETGEARへ戻す」「Wi‑Fi状態更新」ボタンを用意する。
+- 外部Wi‑Fi一覧は`SharedPreferences`で保持し、アプリ再起動後も維持する。
+- SSID名の前後空白や引用符を正規化して比較する。
+
+### 11.4 互換性と制約
+
+- SHL24では`WifiManager`ベースの接続切替を優先する。
+- 新しいAndroidでは、利用可能な場合は`NetworkSpecifier`または`NetworkRequest`に対応させる。
+- API 17相当の端末では、固定SSIDの事前設定と再接続のみを実装し、ネットワーク一覧の自動追加は避ける。
+- アプリは「既に外部Wi‑Fiに接続中なのにClassic接続へ勝手に戻る」ことがないよう、切替条件を明確に制御する。
+- NETGEARへ戻る処理の失敗時はeventログへ記録し、Classic通信を未実行のまま次サイクルに再試行する。
+
+### 11.5 受入基準（Wi‑Fi切替）
+
+- `classic_wifi_ssid`に接続中にClassic Modbus通信が正常に行えれば、ロギングを継続すること。
+- `upload_wifi_ssids`に一致するSSIDへ接続時は、Supabase uploadを優先して実行すること。
+- upload成功後に`classic_wifi_ssid`へ自動回復すること。
+- 回復後、ClassicのModbus応答確認に成功した場合にのみ通常ロギングへ戻すこと。
+- Wi‑Fi一覧が未設定の場合、外部Wi‑Fiによる自動切替を行わず、Classicロギングのみ継続すること。
+- 切替時にeventログへSSID変更・復帰の記録が残ること。
 
 ---
 
@@ -723,8 +769,11 @@ Tls12.java
 2. Supabase側NULL列が意図どおり埋まることを確認する。
 3. 充電ステータスコード対応を公式仕様・実機値で確定する。
 4. GalaxyとSHL24で連続運転・連続アップロード試験を行う。
-5. Wi-Fi復帰後にClassic Modbus通信の再確認を行う。
+5. Wi‑Fi復帰後にClassic Modbus通信の再確認を行う。
 6. 既存SQLite DBから新DBスキーマへの安全な移行処理を確認する。
+7. NETGEARと外部Wi‑Fiの自動切替を実装する。
+8. 外部Wi‑Fi設定UIをMainActivityに追加する。
+9. `classic_wifi_ssid`と`upload_wifi_ssids`をSharedPreferencesへ保存する。
 
 ### 優先度B
 
@@ -737,6 +786,7 @@ Tls12.java
 7. DBバックアップ先のAndroid世代別対応
 8. Google Driveバックアップ
 9. Webダッシュボード
+10. 外部Wi‑Fiでのupload成功後にNETGEARへ戻る処理の定量検証
 
 ### 優先度C
 
@@ -754,7 +804,7 @@ Tls12.java
 ### 19.1 ローカルロギング
 
 - 24時間以上、60秒周期で継続記録できること。
-- Wi-Fi断、Classic再起動、Socket例外後に自動回復すること。
+- Wi‑Fi断、Classic再起動、Socket例外後に自動回復すること。
 - 測定間隔と時刻軸が正しいこと。
 
 ### 19.2 eventログ
@@ -785,6 +835,15 @@ Tls12.java
 - 欠測期間が実時間の空白として表示されること。
 - 24時間範囲が正しいこと。
 - 240点程度へ間引いても時刻関係が崩れないこと。
+
+### 19.6 Wi‑Fi切替受入試験
+
+- `classic_wifi_ssid`に接続中はClassic Modbus通信が優先されること。
+- `upload_wifi_ssids`に一致するSSIDへ切り替わるとSupabase uploadが実行されること。
+- upload成功後、NETGEARへ自動復帰すること。
+- NETGEAR復帰後にClassic通信が動作確認できること。
+- Wi‑Fi切替失敗時にはeventログへその理由が残ること。
+- 外部Wi‑Fiが未設定の場合、Classicロギングだけが継続されること。
 
 ---
 
@@ -834,9 +893,11 @@ Tls12.java
 2. クラウド送信失敗をロギング停止の理由にしない。
 3. データの時刻は測定時刻と登録時刻を分離する。
 4. データ再送を前提に冪等性を確保する。
-5. SQLiteを原本とし、クラウドサービスへロックインしない。
+5. SQLiteを原本とし、クラウドサービスへロックイン��ない。
 6. 古いAndroidでも動く保守的な実装を選ぶ。
 7. 未確認のModbusコードや充電状態を推測で確定しない。
 8. Classicへの書込みは最小限かつ機能を分離する。
 9. ERRORは長期保存し、通常診断ログは期限管理する。
 10. 既存構造を維持し、機能追加は局所的に行う。
+11. Wi‑Fi切替時でもClassicロギングの継続性を確保する。
+12. 外部Wi‑Fiの利用はインターネット接続が可能なときに限定し、Classicとのローカル通信を優先する。
