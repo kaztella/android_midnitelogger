@@ -7,6 +7,7 @@ import android.graphics.Paint;
 import android.graphics.Path;
 import android.view.View;
 
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
@@ -141,4 +142,3 @@ public class ChartView extends View {
         canvas.drawText(end, right - paint.measureText(end), bottom + 28, paint);
     }
 }
-
