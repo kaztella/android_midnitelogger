@@ -104,7 +104,7 @@ public class LoggerService extends Service {
 
             Notification notification = new Notification.Builder(this, "midnite_logger")
                     .setContentTitle("MidNite Logger")
-                    .setSmallIcon(android.R.drawable.stat_sys_data)
+                    .setSmallIcon(android.R.drawable.stat_notify_sync)
                     .setContentText("Running")
                     .setOngoing(true)
                     .build();
