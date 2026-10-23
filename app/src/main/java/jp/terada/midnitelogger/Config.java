@@ -6,7 +6,7 @@ public final class Config {
     public static final int UNIT_ID = 1;
 
     public static final String PREFS = "midnite_prefs";
-    public static final String CLASSIC_WIFI_SSID = "NETGEAR";
+    public static final String CLASSIC_WIFI_SSID = "NETGEAR_2GEXT";
     public static final String DEFAULT_UPLOAD_WIFI_SSIDS = "HomeWiFi,OfficeWiFi";
 
     public static final long LOG_INTERVAL_MS = 60000L;
