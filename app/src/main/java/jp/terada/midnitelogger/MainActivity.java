@@ -7,9 +7,11 @@ import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.os.Build;
 import android.os.Bundle;
-import android.os.Environment;
 import android.os.Handler;
+import android.text.SpannableStringBuilder;
+import android.text.style.ForegroundColorSpan;
 import android.view.View;
+import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.EditText;
@@ -20,6 +22,9 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -27,22 +32,36 @@ import java.util.Comparator;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
+import java.util.Properties;
 
 public class MainActivity extends Activity {
+    private static final String[] CHART_COLUMNS = {
+            "battery_v", "pv_v", "classic_a", "wb_a", "wb_precise_a",
+            "pv_a", "watts", "daily_kwh", "batt_temp", "fet_temp", "pcb_temp"
+    };
+    private static final String[] CHART_UNITS = {"V", "V", "A", "A", "A", "A", "W", "kWh", "C", "C", "C"};
+
     private Database db;
     private TextView status;
     private TextView values;
     private TextView events;
     private TextView storage;
     private TextView wifiStatus;
+    private TextView chartRangeLabel;
     private EditText url;
     private EditText key;
     private EditText device;
     private EditText classicWifiSsid;
     private EditText uploadWifiSsidList;
+    private EditText chartMinValue;
+    private EditText chartMaxValue;
     private Spinner metric;
+    private Button chartAutoToggle;
     private ChartView chart;
     private final Handler handler = new Handler();
+    private long chartWindowMs = 24L * 60L * 60L * 1000L;
+    private long chartOffsetMs = 0L;
+    private boolean chartAutoY = true;
 
     private final Runnable refreshTask = new Runnable() {
         @Override public void run() {
@@ -54,6 +73,7 @@ public class MainActivity extends Activity {
     @Override public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         db = new Database(this);
+        loadPersistedSettingsFile();
         requestRuntimePermissions();
 
         ScrollView scroll = new ScrollView(this);
@@ -158,12 +178,63 @@ public class MainActivity extends Activity {
         };
         metric.setAdapter(new ArrayAdapter<String>(this,
                 android.R.layout.simple_spinner_dropdown_item, names));
+        metric.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                loadChartSettingsForCurrentMetric();
+                updateGraph();
+            }
+
+            @Override public void onNothingSelected(AdapterView<?> parent) {
+            }
+        });
         root.addView(metric);
+
+        addText(root, "グラフY軸（固定/自動）");
+        LinearLayout chartRangeRow = new LinearLayout(this);
+        chartRangeRow.setOrientation(LinearLayout.HORIZONTAL);
+        chartAutoToggle = addButton(chartRangeRow, "Y軸: 自動", new View.OnClickListener() {
+            @Override public void onClick(View view) {
+                chartAutoY = !chartAutoY;
+                chartAutoToggle.setText(chartAutoY ? "Y軸: 自動" : "Y軸: 固定");
+                persistGraphSettingsForCurrentMetric();
+                updateGraph();
+            }
+        });
+        chartMinValue = addEdit(chartRangeRow);
+        chartMinValue.setHint("最小");
+        chartMaxValue = addEdit(chartRangeRow);
+        chartMaxValue.setHint("最大");
+        root.addView(chartRangeRow);
+
+        LinearLayout chartNavRow = new LinearLayout(this);
+        chartNavRow.setOrientation(LinearLayout.HORIZONTAL);
+        addButton(chartNavRow, "時間-", new View.OnClickListener() {
+            @Override public void onClick(View view) {
+                changeChartWindow(false);
+            }
+        });
+        addButton(chartNavRow, "時間+", new View.OnClickListener() {
+            @Override public void onClick(View view) {
+                changeChartWindow(true);
+            }
+        });
+        addButton(chartNavRow, "←", new View.OnClickListener() {
+            @Override public void onClick(View view) {
+                shiftChartWindow(-1);
+            }
+        });
+        addButton(chartNavRow, "→", new View.OnClickListener() {
+            @Override public void onClick(View view) {
+                shiftChartWindow(1);
+            }
+        });
+        root.addView(chartNavRow);
+        chartRangeLabel = addText(root, "表示範囲: 24時間");
 
         chart = new ChartView(this);
         root.addView(chart, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, 500));
-        addButton(root, "直近24時間グラフ更新", new View.OnClickListener() {
+        addButton(root, "グラフ更新", new View.OnClickListener() {
             @Override public void onClick(View view) { updateGraph(); }
         });
 
@@ -174,8 +245,111 @@ public class MainActivity extends Activity {
         });
 
         setContentView(scroll);
+        loadChartSettingsForCurrentMetric();
         refresh();
         handler.postDelayed(refreshTask, 3000L);
+    }
+
+    private File getSettingsFile() {
+        File dir = getExternalFilesDir(null);
+        if (dir == null) {
+            dir = getFilesDir();
+        }
+        return new File(dir, "midnite_logger_settings.properties");
+    }
+
+    private void loadPersistedSettingsFile() {
+        File file = getSettingsFile();
+        if (!file.exists()) {
+            return;
+        }
+        Properties props = new Properties();
+        FileInputStream in = null;
+        try {
+            in = new FileInputStream(file);
+            props.load(in);
+            SharedPreferences prefs = getSharedPreferences(Config.PREFS, 0);
+            SharedPreferences.Editor edit = prefs.edit();
+            String urlValue = props.getProperty("supabase_rpc_url", "");
+            if (urlValue.length() > 0) edit.putString("supabase_rpc_url", urlValue);
+            String keyValue = props.getProperty("supabase_key", "");
+            if (keyValue.length() > 0) edit.putString("supabase_key", keyValue);
+            String deviceValue = props.getProperty("device_id", "");
+            if (deviceValue.length() > 0) edit.putString("device_id", deviceValue);
+            String classicValue = props.getProperty("classic_wifi_ssid", "");
+            if (classicValue.length() > 0) edit.putString("classic_wifi_ssid", classicValue);
+            String uploadValue = props.getProperty("upload_wifi_ssids", "");
+            if (uploadValue.length() > 0) edit.putString("upload_wifi_ssids", uploadValue);
+            for (int i = 0; i < CHART_COLUMNS.length; i++) {
+                String metricKey = CHART_COLUMNS[i];
+                String autoKey = "graph_auto_" + metricKey;
+                String autoValue = props.getProperty(autoKey, "");
+                if (autoValue.length() > 0) {
+                    edit.putBoolean(autoKey, "1".equals(autoValue) || "true".equalsIgnoreCase(autoValue));
+                }
+                String minKey = "graph_fixed_min_" + metricKey;
+                String minValue = props.getProperty(minKey, "");
+                if (minValue.length() > 0) {
+                    try {
+                        edit.putFloat(minKey, Float.parseFloat(minValue));
+                    } catch (NumberFormatException ignored) { }
+                }
+                String maxKey = "graph_fixed_max_" + metricKey;
+                String maxValue = props.getProperty(maxKey, "");
+                if (maxValue.length() > 0) {
+                    try {
+                        edit.putFloat(maxKey, Float.parseFloat(maxValue));
+                    } catch (NumberFormatException ignored) { }
+                }
+            }
+            String windowValue = props.getProperty("graph_window_ms", "");
+            if (windowValue.length() > 0) {
+                try { edit.putLong("graph_window_ms", Long.parseLong(windowValue)); } catch (NumberFormatException ignored) { }
+            }
+            String offsetValue = props.getProperty("graph_offset_ms", "");
+            if (offsetValue.length() > 0) {
+                try { edit.putLong("graph_offset_ms", Long.parseLong(offsetValue)); } catch (NumberFormatException ignored) { }
+            }
+            edit.apply();
+        } catch (IOException ignored) {
+        } finally {
+            if (in != null) {
+                try { in.close(); } catch (IOException ignored) { }
+            }
+        }
+    }
+
+    private void writePersistedSettingsFile() {
+        File file = getSettingsFile();
+        Properties props = new Properties();
+        SharedPreferences prefs = getSharedPreferences(Config.PREFS, 0);
+        props.setProperty("supabase_rpc_url", prefs.getString("supabase_rpc_url", ""));
+        props.setProperty("supabase_key", prefs.getString("supabase_key", ""));
+        props.setProperty("device_id", prefs.getString("device_id", ""));
+        props.setProperty("classic_wifi_ssid", prefs.getString("classic_wifi_ssid", Config.CLASSIC_WIFI_SSID));
+        props.setProperty("upload_wifi_ssids", prefs.getString("upload_wifi_ssids", Config.DEFAULT_UPLOAD_WIFI_SSIDS));
+        for (int i = 0; i < CHART_COLUMNS.length; i++) {
+            String metricKey = CHART_COLUMNS[i];
+            props.setProperty("graph_auto_" + metricKey, prefs.getBoolean("graph_auto_" + metricKey, true) ? "1" : "0");
+            if (prefs.contains("graph_fixed_min_" + metricKey)) {
+                props.setProperty("graph_fixed_min_" + metricKey, Float.toString(prefs.getFloat("graph_fixed_min_" + metricKey, 0f)));
+            }
+            if (prefs.contains("graph_fixed_max_" + metricKey)) {
+                props.setProperty("graph_fixed_max_" + metricKey, Float.toString(prefs.getFloat("graph_fixed_max_" + metricKey, 0f)));
+            }
+        }
+        props.setProperty("graph_window_ms", Long.toString(chartWindowMs));
+        props.setProperty("graph_offset_ms", Long.toString(chartOffsetMs));
+        FileOutputStream out = null;
+        try {
+            out = new FileOutputStream(file);
+            props.store(out, "Midnite Logger settings");
+        } catch (IOException ignored) {
+        } finally {
+            if (out != null) {
+                try { out.close(); } catch (IOException ignored) { }
+            }
+        }
     }
 
     private TextView addText(LinearLayout parent, String text) {
@@ -204,14 +378,72 @@ public class MainActivity extends Activity {
     }
 
     private void saveSettings() {
-        getSharedPreferences(Config.PREFS, 0).edit()
-                .putString("supabase_rpc_url", url.getText().toString().trim())
+        SharedPreferences.Editor edit = getSharedPreferences(Config.PREFS, 0).edit();
+        edit.putString("supabase_rpc_url", url.getText().toString().trim())
                 .putString("supabase_key", key.getText().toString().trim())
                 .putString("device_id", device.getText().toString().trim())
                 .putString("classic_wifi_ssid", classicWifiSsid.getText().toString().trim())
                 .putString("upload_wifi_ssids", uploadWifiSsidList.getText().toString().trim())
                 .apply();
+        persistGraphSettingsForCurrentMetric();
+        writePersistedSettingsFile();
         Toast.makeText(this, "保存しました", Toast.LENGTH_SHORT).show();
+    }
+
+    private void loadChartSettingsForCurrentMetric() {
+        if (metric == null || chartMinValue == null || chartMaxValue == null) {
+            return;
+        }
+        String key = CHART_COLUMNS[metric.getSelectedItemPosition()];
+        SharedPreferences prefs = getSharedPreferences(Config.PREFS, 0);
+        chartAutoY = prefs.getBoolean("graph_auto_" + key, true);
+        chartWindowMs = prefs.getLong("graph_window_ms", 24L * 60L * 60L * 1000L);
+        chartOffsetMs = prefs.getLong("graph_offset_ms", 0L);
+        if (prefs.contains("graph_fixed_min_" + key)) {
+            chartMinValue.setText(Float.toString(prefs.getFloat("graph_fixed_min_" + key, 0f)));
+        } else {
+            chartMinValue.setText("");
+        }
+        if (prefs.contains("graph_fixed_max_" + key)) {
+            chartMaxValue.setText(Float.toString(prefs.getFloat("graph_fixed_max_" + key, 0f)));
+        } else {
+            chartMaxValue.setText("");
+        }
+        if (chartAutoToggle != null) {
+            chartAutoToggle.setText(chartAutoY ? "Y軸: 自動" : "Y軸: 固定");
+        }
+        if (chartRangeLabel != null) {
+            chartRangeLabel.setText("表示範囲: " + formatRangeDescription(chartWindowMs));
+        }
+    }
+
+    private void persistGraphSettingsForCurrentMetric() {
+        if (metric == null || chartMinValue == null || chartMaxValue == null) {
+            return;
+        }
+        String key = CHART_COLUMNS[metric.getSelectedItemPosition()];
+        SharedPreferences.Editor edit = getSharedPreferences(Config.PREFS, 0).edit();
+        edit.putBoolean("graph_auto_" + key, chartAutoY);
+        edit.putLong("graph_window_ms", chartWindowMs);
+        edit.putLong("graph_offset_ms", chartOffsetMs);
+        String minText = chartMinValue.getText().toString().trim();
+        if (minText.length() > 0) {
+            try {
+                edit.putFloat("graph_fixed_min_" + key, Float.parseFloat(minText));
+            } catch (NumberFormatException ignored) { }
+        } else {
+            edit.remove("graph_fixed_min_" + key);
+        }
+        String maxText = chartMaxValue.getText().toString().trim();
+        if (maxText.length() > 0) {
+            try {
+                edit.putFloat("graph_fixed_max_" + key, Float.parseFloat(maxText));
+            } catch (NumberFormatException ignored) { }
+        } else {
+            edit.remove("graph_fixed_max_" + key);
+        }
+        edit.apply();
+        writePersistedSettingsFile();
     }
 
     private void refresh() {
@@ -228,12 +460,13 @@ public class MainActivity extends Activity {
                     record.ts, record.batteryV, record.pvV,
                     record.wbPreciseA, record.watts, chargeStageText(record.chargeStage)));
         }
-        events.setText(db.recentEvents(50));
+        events.setText(formatEventLog(db.recentEvents(50)));
         storage.setText(String.format(Locale.US,
                 "測定 %d件 / DB %.2f MB / ERROR %d件 / 端末空き %.2f GB",
                 db.count(), db.dbBytes() / 1048576.0,
                 db.errorCount(), db.freeBytes() / 1073741824.0));
         updateWifiStatus();
+        updateGraph();
     }
 
     private void updateWifiStatus() {
@@ -254,20 +487,92 @@ public class MainActivity extends Activity {
         }
     }
 
+    private void changeChartWindow(boolean zoomIn) {
+        long minWindow = 30L * 60L * 1000L;
+        long maxWindow = 7L * 24L * 60L * 60L * 1000L;
+        long next = zoomIn ? (chartWindowMs / 2L) : (chartWindowMs * 2L);
+        if (next < minWindow) next = minWindow;
+        if (next > maxWindow) next = maxWindow;
+        chartWindowMs = next;
+        persistGraphSettingsForCurrentMetric();
+        updateGraph();
+    }
+
+    private void shiftChartWindow(int direction) {
+        long step = Math.max(chartWindowMs / 8L, 60L * 1000L);
+        chartOffsetMs += direction * step;
+        persistGraphSettingsForCurrentMetric();
+        updateGraph();
+    }
+
+    private String formatRangeDescription(long rangeMs) {
+        long hours = rangeMs / (60L * 60L * 1000L);
+        if (hours <= 0) {
+            return "30分";
+        }
+        if (hours < 24L) {
+            return hours + "時間";
+        }
+        long days = hours / 24L;
+        if (days < 7L) {
+            return days + "日";
+        }
+        return "7日";
+    }
+
+    private CharSequence formatEventLog(String raw) {
+        if (raw == null || raw.trim().isEmpty()) {
+            return "";
+        }
+        SpannableStringBuilder builder = new SpannableStringBuilder();
+        String[] lines = raw.split("\\n");
+        for (int i = 0; i < lines.length; i++) {
+            if (i > 0) {
+                builder.append('\n');
+            }
+            String line = lines[i];
+            if (line.contains("[ERROR]") || line.contains(" ERROR ") || line.contains("ERROR")) {
+                int start = builder.length();
+                builder.append(line);
+                builder.setSpan(new ForegroundColorSpan(Color.RED), start, builder.length(), 0);
+            } else {
+                builder.append(line);
+            }
+        }
+        return builder;
+    }
+
     private void updateGraph() {
-        String[] columns = new String[]{
-                "battery_v", "pv_v", "classic_a", "wb_a", "wb_precise_a",
-                "pv_a", "watts", "daily_kwh", "batt_temp", "fet_temp", "pcb_temp"
-        };
-        String[] units = new String[]{"V", "V", "A", "A", "A", "A", "W", "kWh", "C", "C", "C"};
+        if (metric == null || chart == null) {
+            return;
+        }
         int index = metric.getSelectedItemPosition();
-        Date end = new Date();
-        Date start = new Date(end.getTime() - 86400000L);
+        if (index < 0 || index >= CHART_COLUMNS.length) {
+            return;
+        }
+        String column = CHART_COLUMNS[index];
+        long endMs = System.currentTimeMillis() - chartOffsetMs;
+        long startMs = endMs - chartWindowMs;
+        Date end = new Date(endMs);
+        Date start = new Date(startMs);
         SimpleDateFormat format = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US);
-        List<float[]> points = db.chart(
-                columns[index], format.format(start), format.format(end), 240);
-        chart.set(points, metric.getSelectedItem() + " [" + units[index] + "]",
-                start.getTime(), end.getTime());
+        List<float[]> points = db.chart(column, format.format(start), format.format(end), 240);
+        Float fixedMin = null;
+        Float fixedMax = null;
+        if (!chartAutoY) {
+            SharedPreferences prefs = getSharedPreferences(Config.PREFS, 0);
+            if (prefs.contains("graph_fixed_min_" + column)) {
+                fixedMin = prefs.getFloat("graph_fixed_min_" + column, 0f);
+            }
+            if (prefs.contains("graph_fixed_max_" + column)) {
+                fixedMax = prefs.getFloat("graph_fixed_max_" + column, 0f);
+            }
+        }
+        chart.set(points, metric.getSelectedItem() + " [" + CHART_UNITS[index] + "]",
+                startMs, endMs, fixedMin, fixedMax, chartAutoY);
+        if (chartRangeLabel != null) {
+            chartRangeLabel.setText("表示範囲: " + formatRangeDescription(chartWindowMs));
+        }
     }
 
     private void backupDatabase() {
@@ -335,3 +640,4 @@ public class MainActivity extends Activity {
         super.onDestroy();
     }
 }
+
