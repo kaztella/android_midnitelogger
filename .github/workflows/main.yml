@@ -2,9 +2,6 @@ name: Release APK
 
 on:
   workflow_dispatch:
-  push:
-    tags:
-      - "v*"
 
 jobs:
   build-and-release:
@@ -26,7 +23,7 @@ jobs:
           gradle-version: "8.9"
 
       - name: Build debug APK
-        run: ./gradlew assembleDebug
+        run: gradle assembleDebug
 
       - name: Create GitHub Release and upload APK
         uses: softprops/action-gh-release@v2
