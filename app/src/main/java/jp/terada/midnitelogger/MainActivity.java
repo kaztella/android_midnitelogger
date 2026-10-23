@@ -7,6 +7,7 @@ import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
 import android.os.Handler;
 import android.view.View;
 import android.widget.ArrayAdapter;
@@ -17,6 +18,7 @@ import android.widget.ScrollView;
 import android.widget.Spinner;
 import android.widget.TextView;
 import android.widget.Toast;
+
 import java.io.File;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -32,9 +34,12 @@ public class MainActivity extends Activity {
     private TextView values;
     private TextView events;
     private TextView storage;
+    private TextView wifiStatus;
     private EditText url;
     private EditText key;
     private EditText device;
+    private EditText classicWifiSsid;
+    private EditText uploadWifiSsidList;
     private Spinner metric;
     private ChartView chart;
     private final Handler handler = new Handler();
@@ -99,11 +104,37 @@ public class MainActivity extends Activity {
         key = addEdit(root);
         addText(root, "device_id");
         device = addEdit(root);
+        addText(root, "Classic Wi‑Fi SSID");
+        classicWifiSsid = addEdit(root);
+        addText(root, "Upload Wi‑Fi SSIDs");
+        uploadWifiSsidList = addEdit(root);
+        addText(root, "現在の Wi‑Fi");
+        wifiStatus = addText(root, "未確認");
 
         SharedPreferences prefs = getSharedPreferences(Config.PREFS, 0);
         url.setText(prefs.getString("supabase_rpc_url", ""));
         key.setText(prefs.getString("supabase_key", ""));
         device.setText(prefs.getString("device_id", "shl24-01"));
+        classicWifiSsid.setText(prefs.getString("classic_wifi_ssid", Config.CLASSIC_WIFI_SSID));
+        uploadWifiSsidList.setText(prefs.getString("upload_wifi_ssids", Config.DEFAULT_UPLOAD_WIFI_SSIDS));
+
+        LinearLayout wifiRow = new LinearLayout(this);
+        root.addView(wifiRow);
+        addButton(wifiRow, "Wi‑Fi状態確認", new View.OnClickListener() {
+            @Override public void onClick(View view) {
+                updateWifiStatus();
+            }
+        });
+        addButton(wifiRow, "NETGEAR復帰", new View.OnClickListener() {
+            @Override public void onClick(View view) {
+                WifiNetworkManager wifi = new WifiNetworkManager(MainActivity.this);
+                boolean ok = wifi.restoreClassicNetwork();
+                Toast.makeText(MainActivity.this,
+                        ok ? "NETGEARへ復帰を試行" : "NETGEARへ戻れませんでした",
+                        Toast.LENGTH_SHORT).show();
+                updateWifiStatus();
+            }
+        });
 
         LinearLayout dbRow = new LinearLayout(this);
         root.addView(dbRow);
@@ -116,8 +147,8 @@ public class MainActivity extends Activity {
         addButton(dbRow, "DB統合", new View.OnClickListener() {
             @Override public void onClick(View view) { mergeLatestBackup(); }
         });
-
         storage = addText(root, "");
+
         addText(root, "グラフ項目");
         metric = new Spinner(this);
         String[] names = new String[]{
@@ -177,6 +208,8 @@ public class MainActivity extends Activity {
                 .putString("supabase_rpc_url", url.getText().toString().trim())
                 .putString("supabase_key", key.getText().toString().trim())
                 .putString("device_id", device.getText().toString().trim())
+                .putString("classic_wifi_ssid", classicWifiSsid.getText().toString().trim())
+                .putString("upload_wifi_ssids", uploadWifiSsidList.getText().toString().trim())
                 .apply();
         Toast.makeText(this, "保存しました", Toast.LENGTH_SHORT).show();
     }
@@ -185,6 +218,7 @@ public class MainActivity extends Activity {
         boolean running = getSharedPreferences(Config.PREFS, 0)
                 .getBoolean("running", false);
         status.setText(running ? "ロギング中" : "停止中");
+
         Record record = db.latest();
         if (record == null) {
             values.setText("データ未取得");
@@ -199,6 +233,13 @@ public class MainActivity extends Activity {
                 "測定 %d件 / DB %.2f MB / ERROR %d件 / 端末空き %.2f GB",
                 db.count(), db.dbBytes() / 1048576.0,
                 db.errorCount(), db.freeBytes() / 1073741824.0));
+        updateWifiStatus();
+    }
+
+    private void updateWifiStatus() {
+        WifiNetworkManager wifi = new WifiNetworkManager(this);
+        String current = wifi.getConnectedSsid();
+        wifiStatus.setText(current == null ? "未接続" : current);
     }
 
     private String chargeStageText(int code) {
@@ -240,27 +281,19 @@ public class MainActivity extends Activity {
 
     private void mergeLatestBackup() {
         File base = getExternalFilesDir(null);
-        
+
         if (base == null) {
-            Toast.makeText(
-                    this,
-                    "外部ストレージを利用できません",
-                    Toast.LENGTH_LONG
-            ).show();
+            Toast.makeText(this, "外部ストレージを利用できません", Toast.LENGTH_LONG).show();
             return;
         }
-        
+
         File directory = new File(base, "MidniteLogger");
-        
         if (!directory.exists() && !directory.mkdirs()) {
-            Toast.makeText(
-                    this,
-                    "バックアップフォルダーを作成できません: "
-                            + directory.getAbsolutePath(),
-                    Toast.LENGTH_LONG
-            ).show();
+            Toast.makeText(this, "バックアップフォルダーを作成できません: "
+                    + directory.getAbsolutePath(), Toast.LENGTH_LONG).show();
             return;
         }
+
         File[] files = directory.listFiles();
         if (files == null || files.length == 0) {
             Toast.makeText(this, "バックアップなし", Toast.LENGTH_SHORT).show();
