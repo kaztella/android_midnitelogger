@@ -7,6 +7,7 @@ import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
 import android.os.Handler;
 import android.text.SpannableStringBuilder;
 import android.text.style.ForegroundColorSpan;
@@ -250,12 +251,28 @@ public class MainActivity extends Activity {
         handler.postDelayed(refreshTask, 3000L);
     }
 
-    private File getSettingsFile() {
-        File dir = getExternalFilesDir(null);
-        if (dir == null) {
-            dir = getFilesDir();
+    private File getBackupDirectory() {
+        File root = Environment.getExternalStorageDirectory();
+        if (root != null) {
+            File dir = new File(root, Config.BACKUP_DIR_NAME);
+            if (!dir.exists() && !dir.mkdirs()) {
+                File fallback = new File(getFilesDir(), Config.BACKUP_DIR_NAME);
+                if (!fallback.exists() && !fallback.mkdirs()) {
+                    return getFilesDir();
+                }
+                return fallback;
+            }
+            return dir;
         }
-        return new File(dir, "midnite_logger_settings.properties");
+        File dir = new File(getFilesDir(), Config.BACKUP_DIR_NAME);
+        if (!dir.exists() && !dir.mkdirs()) {
+            return getFilesDir();
+        }
+        return dir;
+    }
+
+    private File getSettingsFile() {
+        return new File(getBackupDirectory(), Config.SETTINGS_FILE_NAME);
     }
 
     private void loadPersistedSettingsFile() {
@@ -320,7 +337,11 @@ public class MainActivity extends Activity {
     }
 
     private void writePersistedSettingsFile() {
-        File file = getSettingsFile();
+        File dir = getBackupDirectory();
+        if (!dir.exists() && !dir.mkdirs()) {
+            return;
+        }
+        File file = new File(dir, Config.SETTINGS_FILE_NAME);
         Properties props = new Properties();
         SharedPreferences prefs = getSharedPreferences(Config.PREFS, 0);
         props.setProperty("supabase_rpc_url", prefs.getString("supabase_rpc_url", ""));
@@ -585,14 +606,14 @@ public class MainActivity extends Activity {
     }
 
     private void mergeLatestBackup() {
-        File base = getExternalFilesDir(null);
+        File base = getBackupDirectory();
 
         if (base == null) {
             Toast.makeText(this, "外部ストレージを利用できません", Toast.LENGTH_LONG).show();
             return;
         }
 
-        File directory = new File(base, "MidniteLogger");
+        File directory = new File(base, Config.BACKUP_DIR_NAME);
         if (!directory.exists() && !directory.mkdirs()) {
             Toast.makeText(this, "バックアップフォルダーを作成できません: "
                     + directory.getAbsolutePath(), Toast.LENGTH_LONG).show();
@@ -640,4 +661,3 @@ public class MainActivity extends Activity {
         super.onDestroy();
     }
 }
-

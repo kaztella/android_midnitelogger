@@ -4,10 +4,13 @@ import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.Service;
+import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.net.wifi.WifiManager;
 import android.os.Build;
 import android.os.IBinder;
+import android.os.PowerManager;
 
 import java.util.List;
 import java.util.concurrent.Executors;
@@ -18,6 +21,9 @@ public class LoggerService extends Service {
     private ScheduledExecutorService ex;
     private Database db;
     private WifiNetworkManager wifiNetworkManager;
+    private PowerManager.WakeLock wakeLock;
+    private WifiManager.WifiLock wifiLock;
+    private long lastUploadAttemptMs = 0L;
 
     @Override
     public void onCreate() {
@@ -25,6 +31,16 @@ public class LoggerService extends Service {
         db = new Database(this);
         wifiNetworkManager = new WifiNetworkManager(this);
         foreground();
+        PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+        if (pm != null) {
+            wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "MidniteLogger:cycle");
+            wakeLock.setReferenceCounted(false);
+        }
+        WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+        if (wm != null) {
+            wifiLock = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "MidniteLogger:wifi");
+            wifiLock.setReferenceCounted(false);
+        }
         getSharedPreferences(Config.PREFS, 0).edit().putBoolean("running", true).apply();
         db.event("INFO", "Service開始");
         ex = Executors.newSingleThreadScheduledExecutor();
@@ -37,6 +53,13 @@ public class LoggerService extends Service {
     }
 
     private void cycle() {
+        final long now = System.currentTimeMillis();
+        if (wakeLock != null && !wakeLock.isHeld()) {
+            wakeLock.acquire();
+        }
+        if (wifiLock != null && !wifiLock.isHeld()) {
+            wifiLock.acquire();
+        }
         try {
             SharedPreferences prefs = getSharedPreferences(Config.PREFS, 0);
             String classicWifiSsid = prefs.getString("classic_wifi_ssid", Config.CLASSIC_WIFI_SSID);
@@ -52,6 +75,7 @@ public class LoggerService extends Service {
 
             if (wifiNetworkManager.shouldUploadOnCurrentNetwork(uploadSsids)) {
                 db.event("OK", "外部WiFi接続中: upload実行");
+                lastUploadAttemptMs = now;
                 try {
                     int count = new SupabaseUploader(this, db).upload30s();
                     db.event("OK", "Upload完了 " + count + "件");
@@ -71,9 +95,26 @@ public class LoggerService extends Service {
             }
 
             if (wifiNetworkManager.isConnectedTo(classicWifiSsid)) {
+                if (now - lastUploadAttemptMs < Config.UPLOAD_RETRY_COOLDOWN_MS) {
+                    db.event("INFO", "upload WiFi再試行待機中: " + Config.UPLOAD_RETRY_COOLDOWN_MS + "ms cooldown");
+                    db.event("INFO", "NETGEAR接続中: Classic読取り開始");
+                    ClassicReader reader = new ClassicReader(new Modbus.L() {
+                        @Override
+                        public void log(String level, String message) {
+                            db.event(level, message);
+                        }
+                    });
+                    Record record = reader.read();
+                    db.insert(record);
+                    db.event("DATA", "Battery=" + record.batteryV + " PV=" + record.pvV
+                            + " Power=" + record.watts);
+                    return;
+                }
+
                 String detectedUploadSsid = wifiNetworkManager.findUploadNetworkInScanResults(uploadSsids);
                 if (detectedUploadSsid != null) {
                     db.event("INFO", "upload WiFi検出: " + detectedUploadSsid + " 接続試行");
+                    lastUploadAttemptMs = now;
                     if (wifiNetworkManager.connectToSsid(detectedUploadSsid)) {
                         db.event("OK", "upload WiFi接続開始: " + detectedUploadSsid);
                         return;
@@ -100,6 +141,13 @@ public class LoggerService extends Service {
                     + (currentSsid == null ? "unknown" : currentSsid));
         } catch (Exception ex) {
             db.event("ERROR", "cycle error: " + ex.getMessage());
+        } finally {
+            if (wakeLock != null && wakeLock.isHeld()) {
+                wakeLock.release();
+            }
+            if (wifiLock != null && wifiLock.isHeld()) {
+                wifiLock.release();
+            }
         }
     }
 
