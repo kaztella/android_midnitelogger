@@ -35,11 +35,17 @@ public class LoggerService extends Service {
         if (pm != null) {
             wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "MidniteLogger:cycle");
             wakeLock.setReferenceCounted(false);
+            if (!wakeLock.isHeld()) {
+                wakeLock.acquire();
+            }
         }
         WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
         if (wm != null) {
             wifiLock = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "MidniteLogger:wifi");
             wifiLock.setReferenceCounted(false);
+            if (!wifiLock.isHeld()) {
+                wifiLock.acquire();
+            }
         }
         getSharedPreferences(Config.PREFS, 0).edit().putBoolean("running", true).apply();
         db.event("INFO", "Service開始");
@@ -54,12 +60,6 @@ public class LoggerService extends Service {
 
     private void cycle() {
         final long now = System.currentTimeMillis();
-        if (wakeLock != null && !wakeLock.isHeld()) {
-            wakeLock.acquire();
-        }
-        if (wifiLock != null && !wifiLock.isHeld()) {
-            wifiLock.acquire();
-        }
         try {
             SharedPreferences prefs = getSharedPreferences(Config.PREFS, 0);
             String classicWifiSsid = prefs.getString("classic_wifi_ssid", Config.CLASSIC_WIFI_SSID);
@@ -141,13 +141,6 @@ public class LoggerService extends Service {
                     + (currentSsid == null ? "unknown" : currentSsid));
         } catch (Exception ex) {
             db.event("ERROR", "cycle error: " + ex.getMessage());
-        } finally {
-            if (wakeLock != null && wakeLock.isHeld()) {
-                wakeLock.release();
-            }
-            if (wifiLock != null && wifiLock.isHeld()) {
-                wifiLock.release();
-            }
         }
     }
 
@@ -181,6 +174,12 @@ public class LoggerService extends Service {
         super.onDestroy();
         if (ex != null) {
             ex.shutdownNow();
+        }
+        if (wakeLock != null && wakeLock.isHeld()) {
+            wakeLock.release();
+        }
+        if (wifiLock != null && wifiLock.isHeld()) {
+            wifiLock.release();
         }
         if (db != null) {
             db.event("INFO", "Service停止");

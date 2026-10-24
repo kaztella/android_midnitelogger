@@ -5,6 +5,7 @@ import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.Path;
+import android.view.MotionEvent;
 import android.view.View;
 
 import java.text.SimpleDateFormat;
@@ -14,6 +15,11 @@ import java.util.List;
 import java.util.Locale;
 
 public class ChartView extends View {
+    public interface ChartGestureListener {
+        void onPan(float deltaRatio);
+        void onZoom(float scale);
+    }
+
     private List<float[]> points = new ArrayList<float[]>();
     private String title = "";
     private long startMs;
@@ -21,9 +27,16 @@ public class ChartView extends View {
     private Float fixedMin;
     private Float fixedMax;
     private boolean autoY = true;
+    private ChartGestureListener gestureListener;
+    private float lastTouchX = Float.NaN;
+    private float lastPinchSpan = 0f;
 
     public ChartView(Context context) {
         super(context);
+    }
+
+    public void setChartGestureListener(ChartGestureListener listener) {
+        this.gestureListener = listener;
     }
 
     public void set(List<float[]> values, String chartTitle, long s, long e,
@@ -140,5 +153,62 @@ public class ChartView extends View {
         canvas.drawText(start, left, bottom + 28, paint);
         canvas.drawText(middle, (left + right - paint.measureText(middle)) / 2, bottom + 28, paint);
         canvas.drawText(end, right - paint.measureText(end), bottom + 28, paint);
+    }
+
+    @Override
+    public boolean onTouchEvent(MotionEvent event) {
+        if (gestureListener == null) {
+            return super.onTouchEvent(event);
+        }
+
+        final int action = event.getActionMasked();
+        switch (action) {
+            case MotionEvent.ACTION_DOWN:
+                lastTouchX = event.getX();
+                lastPinchSpan = 0f;
+                return true;
+            case MotionEvent.ACTION_POINTER_DOWN:
+                if (event.getPointerCount() >= 2) {
+                    lastPinchSpan = spacing(event);
+                    if (lastPinchSpan > 0f) {
+                        return true;
+                    }
+                }
+                return true;
+            case MotionEvent.ACTION_MOVE:
+                if (event.getPointerCount() >= 2 && lastPinchSpan > 0f) {
+                    float current = spacing(event);
+                    if (current > 0f) {
+                        float scale = current / lastPinchSpan;
+                        lastPinchSpan = current;
+                        gestureListener.onZoom(scale);
+                    }
+                    return true;
+                }
+                if (!Float.isNaN(lastTouchX)) {
+                    float dx = event.getX() - lastTouchX;
+                    lastTouchX = event.getX();
+                    if (Math.abs(dx) > 3f) {
+                        gestureListener.onPan(dx / getWidth());
+                    }
+                }
+                return true;
+            case MotionEvent.ACTION_UP:
+            case MotionEvent.ACTION_CANCEL:
+                lastTouchX = Float.NaN;
+                lastPinchSpan = 0f;
+                return true;
+            default:
+                return super.onTouchEvent(event);
+        }
+    }
+
+    private float spacing(MotionEvent event) {
+        if (event.getPointerCount() < 2) {
+            return 0f;
+        }
+        float dx = event.getX(0) - event.getX(1);
+        float dy = event.getY(0) - event.getY(1);
+        return (float) Math.sqrt(dx * dx + dy * dy);
     }
 }

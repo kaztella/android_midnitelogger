@@ -165,7 +165,27 @@ public class Database extends SQLiteOpenHelper {
     }
 
     public List<float[]> chart(String col, String start, String end, int max) {
-        return new ArrayList<float[]>();
+        ArrayList<float[]> result = new ArrayList<float[]>();
+        String safeColumn = "battery_v";
+        if ("battery_v".equals(col) || "pv_v".equals(col) || "classic_a".equals(col) || "pv_a".equals(col)
+                || "watts".equals(col) || "daily_kwh".equals(col) || "battery_temp".equals(col)
+                || "fet_temp".equals(col) || "pcb_temp".equals(col) || "wb_a".equals(col)
+                || "wb_precise_a".equals(col) || "classic_state".equals(col) || "charge_stage".equals(col)) {
+            safeColumn = col;
+        }
+        String sql = "SELECT (strftime('%s', ts) - strftime('%s', ?)) AS x, " + safeColumn + " AS y " +
+                "FROM log WHERE ts >= ? AND ts <= ? AND " + safeColumn + " IS NOT NULL ORDER BY ts LIMIT ?";
+        Cursor c = getReadableDatabase().rawQuery(sql, new String[]{start, start, end, String.valueOf(Math.max(1, max))});
+        try {
+            while (c.moveToNext()) {
+                float offsetSec = c.getFloat(0);
+                float value = c.getFloat(1);
+                result.add(new float[]{offsetSec, value});
+            }
+        } finally {
+            c.close();
+        }
+        return result;
     }
 
     public File backup() throws IOException {

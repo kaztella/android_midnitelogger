@@ -38,7 +38,7 @@ import java.util.Properties;
 public class MainActivity extends Activity {
     private static final String[] CHART_COLUMNS = {
             "battery_v", "pv_v", "classic_a", "wb_a", "wb_precise_a",
-            "pv_a", "watts", "daily_kwh", "batt_temp", "fet_temp", "pcb_temp"
+            "pv_a", "watts", "daily_kwh", "battery_temp", "fet_temp", "pcb_temp"
     };
     private static final String[] CHART_UNITS = {"V", "V", "A", "A", "A", "A", "W", "kWh", "C", "C", "C"};
 
@@ -133,7 +133,7 @@ public class MainActivity extends Activity {
         wifiStatus = addText(root, "未確認");
 
         SharedPreferences prefs = getSharedPreferences(Config.PREFS, 0);
-        url.setText(prefs.getString("supabase_rpc_url", ""));
+        url.setText(prefs.getString("supabase_rpc_url", Config.DEFAULT_SUPABASE_RPC_URL));
         key.setText(prefs.getString("supabase_key", ""));
         device.setText(prefs.getString("device_id", "shl24-01"));
         classicWifiSsid.setText(prefs.getString("classic_wifi_ssid", Config.CLASSIC_WIFI_SSID));
@@ -233,6 +233,38 @@ public class MainActivity extends Activity {
         chartRangeLabel = addText(root, "表示範囲: 24時間");
 
         chart = new ChartView(this);
+        chart.setChartGestureListener(new ChartView.ChartGestureListener() {
+            @Override public void onPan(float deltaRatio) {
+                long deltaMs = Math.round(Math.abs(deltaRatio) * chartWindowMs);
+                if (deltaMs <= 0L) {
+                    return;
+                }
+                long offsetDelta = deltaMs;
+                if (deltaRatio < 0f) {
+                    chartOffsetMs -= offsetDelta;
+                } else {
+                    chartOffsetMs += offsetDelta;
+                }
+                persistGraphSettingsForCurrentMetric();
+                updateGraph();
+            }
+
+            @Override public void onZoom(float scale) {
+                if (scale <= 0f || Float.isNaN(scale) || Float.isInfinite(scale)) {
+                    return;
+                }
+                long next = Math.round(chartWindowMs / scale);
+                long minWindow = 30L * 60L * 1000L;
+                long maxWindow = 7L * 24L * 60L * 60L * 1000L;
+                if (next < minWindow) next = minWindow;
+                if (next > maxWindow) next = maxWindow;
+                if (next != chartWindowMs) {
+                    chartWindowMs = next;
+                    persistGraphSettingsForCurrentMetric();
+                    updateGraph();
+                }
+            }
+        });
         root.addView(chart, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, 500));
         addButton(root, "グラフ更新", new View.OnClickListener() {
@@ -344,7 +376,7 @@ public class MainActivity extends Activity {
         File file = new File(dir, Config.SETTINGS_FILE_NAME);
         Properties props = new Properties();
         SharedPreferences prefs = getSharedPreferences(Config.PREFS, 0);
-        props.setProperty("supabase_rpc_url", prefs.getString("supabase_rpc_url", ""));
+        props.setProperty("supabase_rpc_url", prefs.getString("supabase_rpc_url", Config.DEFAULT_SUPABASE_RPC_URL));
         props.setProperty("supabase_key", prefs.getString("supabase_key", ""));
         props.setProperty("device_id", prefs.getString("device_id", ""));
         props.setProperty("classic_wifi_ssid", prefs.getString("classic_wifi_ssid", Config.CLASSIC_WIFI_SSID));
@@ -400,7 +432,11 @@ public class MainActivity extends Activity {
 
     private void saveSettings() {
         SharedPreferences.Editor edit = getSharedPreferences(Config.PREFS, 0).edit();
-        edit.putString("supabase_rpc_url", url.getText().toString().trim())
+        String rpcUrl = url.getText().toString().trim();
+        if (rpcUrl.length() == 0) {
+            rpcUrl = Config.DEFAULT_SUPABASE_RPC_URL;
+        }
+        edit.putString("supabase_rpc_url", rpcUrl)
                 .putString("supabase_key", key.getText().toString().trim())
                 .putString("device_id", device.getText().toString().trim())
                 .putString("classic_wifi_ssid", classicWifiSsid.getText().toString().trim())

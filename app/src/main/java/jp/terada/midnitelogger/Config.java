@@ -8,6 +8,7 @@ public final class Config {
     public static final String PREFS = "midnite_prefs";
     public static final String CLASSIC_WIFI_SSID = "NETGEAR_2GEXT";
     public static final String DEFAULT_UPLOAD_WIFI_SSIDS = "HomeWiFi,OfficeWiFi";
+    public static final String DEFAULT_SUPABASE_RPC_URL = "https://kzpjdbaocfatltvxmzks.supabase.co/rest/v1/rpc/insert_measurements";
     public static final String BACKUP_DIR_NAME = "MidniteLogger";
     public static final String SETTINGS_FILE_NAME = "midnite_logger_settings.properties";
     public static final String DB_BACKUP_PREFIX = "midnite_backup_";
