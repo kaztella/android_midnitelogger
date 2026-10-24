@@ -71,6 +71,17 @@ public class LoggerService extends Service {
             }
 
             if (wifiNetworkManager.isConnectedTo(classicWifiSsid)) {
+                String detectedUploadSsid = wifiNetworkManager.findUploadNetworkInScanResults(uploadSsids);
+                if (detectedUploadSsid != null) {
+                    db.event("INFO", "upload WiFi検出: " + detectedUploadSsid + " 接続試行");
+                    if (wifiNetworkManager.connectToSsid(detectedUploadSsid)) {
+                        db.event("OK", "upload WiFi接続開始: " + detectedUploadSsid);
+                        return;
+                    } else {
+                        db.event("ERROR", "upload WiFi接続失敗: " + detectedUploadSsid);
+                    }
+                }
+
                 db.event("INFO", "NETGEAR接続中: Classic読取り開始");
                 ClassicReader reader = new ClassicReader(new Modbus.L() {
                     @Override
