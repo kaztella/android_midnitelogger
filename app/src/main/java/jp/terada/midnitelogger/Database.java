@@ -1,6 +1,8 @@
 package jp.terada.midnitelogger;
 
+import android.content.ContentValues;
 import android.content.Context;
+import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteOpenHelper;
 import android.os.Environment;
@@ -12,7 +14,9 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Date;
+import java.util.List;
 import java.util.Locale;
 
 public class Database extends SQLiteOpenHelper {
@@ -56,7 +60,7 @@ public class Database extends SQLiteOpenHelper {
         v.put("daily_kwh", r.dailyKwh);
         v.put("charge_stage", r.chargeStage);
         v.put("classic_state", r.classicState);
-        v.put("battery_temp", r.battTemp);
+        v.put("battery_temp", r.batteryTemp);
         v.put("fet_temp", r.fetTemp);
         v.put("pcb_temp", r.pcbTemp);
         v.put("wb_a", r.wbA);
@@ -94,7 +98,7 @@ public class Database extends SQLiteOpenHelper {
         r.dailyKwh = c.getDouble(c.getColumnIndex("daily_kwh"));
         r.chargeStage = c.getInt(c.getColumnIndex("charge_stage"));
         r.classicState = c.getInt(c.getColumnIndex("classic_state"));
-        r.battTemp = c.getDouble(c.getColumnIndex("battery_temp"));
+        r.batteryTemp = c.getDouble(c.getColumnIndex("battery_temp"));
         r.fetTemp = c.getDouble(c.getColumnIndex("fet_temp"));
         r.pcbTemp = c.getDouble(c.getColumnIndex("pcb_temp"));
         r.wbA = c.getDouble(c.getColumnIndex("wb_a"));
@@ -175,12 +179,12 @@ public class Database extends SQLiteOpenHelper {
         return file;
     }
 
-    public int mergeBackup(File f) throws IOException {
+    public long mergeBackup(File f) throws IOException {
         if (!f.exists()) throw new IOException("backup not found");
         SQLiteDatabase d = getWritableDatabase();
         d.execSQL("ATTACH DATABASE '" + f.getAbsolutePath() + "' AS backup");
         try {
-            d.execSQL("INSERT OR IGNORE INTO log(ts,battery_v,pv_v,classic_a,pv_a,watts,daily_kwh,charge_stage,classic_state,battery_temp,fet_temp,pcb_temp,wb_a,wb_precise_a,uploaded) SELECT ts,battery_v,pv_v,classic_a,pv_a,watts,daily_kwh,charge_stage,classic_state,battery_temp,fet_temp,pcb_temp,wb_a,wb_precise_a,0 FROM backup.log");
+            d.execSQL("INSERT OR IGNORE INTO log(ts,battery_v,pv_v,classic_a,pv_a,watts,daily_kwh,charge_stage,classic_state,battery_temp,fet_temp,pcb_temp,wb_a,wb_precise_a,uploaded) SELECT ts,battery_v,pv_v,classic_a,pv_a,watts,daily_kwh,charge_stage,classic_state,battery_temp,fet_temp,pcb_temp,wb_a,wb_precise_a,uploaded FROM backup.log");
             return d.compileStatement("SELECT changes() ").simpleQueryForLong();
         } finally {
             d.execSQL("DETACH DATABASE backup");
