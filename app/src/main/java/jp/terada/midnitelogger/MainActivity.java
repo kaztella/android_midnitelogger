@@ -631,7 +631,7 @@ public class MainActivity extends Activity {
             }
         });
         try {
-            int count = db.mergeBackup(files[0]);
+            long count = db.mergeBackup(files[0]);
             Toast.makeText(this, "統合 " + count + "件", Toast.LENGTH_LONG).show();
             refresh();
         } catch (Exception ex) {
