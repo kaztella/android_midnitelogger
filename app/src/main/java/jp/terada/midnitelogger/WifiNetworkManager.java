@@ -1,6 +1,7 @@
 package jp.terada.midnitelogger;
 
 import android.content.Context;
+import android.net.wifi.ScanResult;
 import android.net.wifi.WifiConfiguration;
 import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiManager;
@@ -57,6 +58,46 @@ public class WifiNetworkManager {
             }
         }
         return false;
+    }
+
+    public String findUploadNetworkInScanResults(List<String> uploadSsids) {
+        if (wifiManager == null || uploadSsids == null || uploadSsids.isEmpty()) {
+            return null;
+        }
+        if (!wifiManager.isWifiEnabled()) {
+            wifiManager.setWifiEnabled(true);
+        }
+        try {
+            wifiManager.startScan();
+        } catch (Exception ignored) {
+            return null;
+        }
+
+        List<ScanResult> results = wifiManager.getScanResults();
+        if (results == null) {
+            return null;
+        }
+
+        for (ScanResult result : results) {
+            if (result == null) {
+                continue;
+            }
+            String scannedSsid = normalizeSsid(result.SSID);
+            if (TextUtils.isEmpty(scannedSsid)) {
+                continue;
+            }
+            for (String target : uploadSsids) {
+                if (TextUtils.isEmpty(target)) {
+                    continue;
+                }
+                String normalizedTarget = normalizeSsid(target);
+                if (!TextUtils.isEmpty(normalizedTarget)
+                        && scannedSsid.equalsIgnoreCase(normalizedTarget)) {
+                    return normalizedTarget;
+                }
+            }
+        }
+        return null;
     }
 
     public boolean connectToSsid(String targetSsid) {
