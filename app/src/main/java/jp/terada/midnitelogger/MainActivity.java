@@ -1,10 +1,12 @@
 package jp.terada.midnitelogger;
 
 import android.app.Activity;
+import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
@@ -162,6 +164,11 @@ public class MainActivity extends Activity {
         addButton(dbRow, "設定保存", new View.OnClickListener() {
             @Override public void onClick(View view) { saveSettings(); }
         });
+        addButton(dbRow, "設定ファイルを開く", new View.OnClickListener() {
+            @Override public void onClick(View view) {
+                openSettingsFile();
+            }
+        });
         addButton(dbRow, "DBバックアップ", new View.OnClickListener() {
             @Override public void onClick(View view) { backupDatabase(); }
         });
@@ -253,7 +260,7 @@ public class MainActivity extends Activity {
                 if (scale <= 0f || Float.isNaN(scale) || Float.isInfinite(scale)) {
                     return;
                 }
-                long next = Math.round(chartWindowMs / scale);
+                long next = Math.round(chartWindowMs * scale);
                 long minWindow = 30L * 60L * 1000L;
                 long maxWindow = 7L * 24L * 60L * 60L * 1000L;
                 if (next < minWindow) next = minWindow;
@@ -305,6 +312,26 @@ public class MainActivity extends Activity {
 
     private File getSettingsFile() {
         return new File(getBackupDirectory(), Config.SETTINGS_FILE_NAME);
+    }
+
+    private void openSettingsFile() {
+        File file = getSettingsFile();
+        if (!file.exists()) {
+            writePersistedSettingsFile();
+            if (!file.exists()) {
+                Toast.makeText(this, "設定ファイルを作成できませんでした", Toast.LENGTH_SHORT).show();
+                return;
+            }
+        }
+
+        Intent intent = new Intent(Intent.ACTION_VIEW);
+        intent.setDataAndType(Uri.fromFile(file), "text/plain");
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        try {
+            startActivity(Intent.createChooser(intent, "設定ファイルを開く"));
+        } catch (ActivityNotFoundException ex) {
+            Toast.makeText(this, "テキストエディタが見つかりませんでした", Toast.LENGTH_SHORT).show();
+        }
     }
 
     private void loadPersistedSettingsFile() {
