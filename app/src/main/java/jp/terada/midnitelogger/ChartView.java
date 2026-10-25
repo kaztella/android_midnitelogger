@@ -59,10 +59,10 @@ public class ChartView extends View {
         paint.setTextSize(28);
         canvas.drawText(title, 12, 30, paint);
 
-        float left = 60f;
-        float top = 48f;
-        float right = getWidth() - 12f;
-        float bottom = getHeight() - 58f;
+        float left = 70f;
+        float top = 52f;
+        float right = getWidth() - 14f;
+        float bottom = getHeight() - 62f;
 
         paint.setStyle(Paint.Style.STROKE);
         paint.setColor(Color.LTGRAY);
@@ -138,8 +138,8 @@ public class ChartView extends View {
         paint.setStyle(Paint.Style.FILL);
         paint.setColor(Color.DKGRAY);
         paint.setTextSize(20);
-        canvas.drawText(String.format(Locale.US, "%.2f", max), 2, top + 10, paint);
-        canvas.drawText(String.format(Locale.US, "%.2f", min), 2, bottom, paint);
+        canvas.drawText(String.format(Locale.US, "%.2f", max), 4, top + 12, paint);
+        canvas.drawText(String.format(Locale.US, "%.2f", min), 4, bottom + 4, paint);
     }
 
     private void labels(Canvas canvas, Paint paint, float left, float right, float bottom) {
@@ -170,6 +170,7 @@ public class ChartView extends View {
             case MotionEvent.ACTION_POINTER_DOWN:
                 if (event.getPointerCount() >= 2) {
                     lastPinchSpan = spacing(event);
+                    lastTouchX = Float.NaN;
                     if (lastPinchSpan > 0f) {
                         return true;
                     }
@@ -179,18 +180,26 @@ public class ChartView extends View {
                 if (event.getPointerCount() >= 2 && lastPinchSpan > 0f) {
                     float current = spacing(event);
                     if (current > 0f) {
-                        float scale = current / lastPinchSpan;
+                        float scale = lastPinchSpan / current;
                         lastPinchSpan = current;
-                        gestureListener.onZoom(scale);
+                        if (scale > 1.02f || scale < 0.98f) {
+                            gestureListener.onZoom(scale);
+                        }
                     }
                     return true;
                 }
                 if (!Float.isNaN(lastTouchX)) {
                     float dx = event.getX() - lastTouchX;
                     lastTouchX = event.getX();
-                    if (Math.abs(dx) > 3f) {
+                    if (Math.abs(dx) > 2f) {
                         gestureListener.onPan(dx / getWidth());
                     }
+                }
+                return true;
+            case MotionEvent.ACTION_POINTER_UP:
+                if (event.getPointerCount() <= 2) {
+                    lastPinchSpan = 0f;
+                    lastTouchX = event.getX();
                 }
                 return true;
             case MotionEvent.ACTION_UP:
