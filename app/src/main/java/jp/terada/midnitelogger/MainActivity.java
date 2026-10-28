@@ -151,7 +151,10 @@ public class MainActivity extends Activity {
         addButton(wifiRow, "NETGEAR復帰", new View.OnClickListener() {
             @Override public void onClick(View view) {
                 WifiNetworkManager wifi = new WifiNetworkManager(MainActivity.this);
-                boolean ok = wifi.restoreClassicNetwork();
+                String classicSsid = getSharedPreferences(Config.PREFS, 0)
+                .getString("classic_wifi_ssid", Config.CLASSIC_WIFI_SSID);
+        
+                boolean ok = wifi.restoreClassicNetwork(classicSsid);
                 Toast.makeText(MainActivity.this,
                         ok ? "NETGEARへ復帰を試行" : "NETGEARへ戻れませんでした",
                         Toast.LENGTH_SHORT).show();
