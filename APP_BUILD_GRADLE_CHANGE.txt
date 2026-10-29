@@ -1,0 +1,11 @@
+In app/build.gradle, add this line inside dependencies { ... }:
+
+    implementation 'org.conscrypt:conscrypt-android:2.5.2'
+
+Example:
+
+dependencies {
+    implementation 'org.conscrypt:conscrypt-android:2.5.2'
+}
+
+Do not add conscrypt-openjdk or conscrypt-openjdk-uber. This Android APK needs conscrypt-android.

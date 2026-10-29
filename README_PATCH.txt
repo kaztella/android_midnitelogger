@@ -1,19 +1,20 @@
-MidNite Logger Wi-Fi/IP wait patch v2
+MidNite Logger Conscrypt TLS patch
 
-Replace these four files in:
-app/src/main/java/jp/terada/midnitelogger/
+Replace/add:
+app/src/main/java/jp/terada/midnitelogger/ConscryptTls.java
+app/src/main/java/jp/terada/midnitelogger/SupabaseUploader.java
 
-- LoggerService.java
-- WifiNetworkManager.java
-- SupabaseUploader.java
-- Tls12.java
+Also edit app/build.gradle and add inside dependencies:
+implementation 'org.conscrypt:conscrypt-android:2.5.2'
 
-Changes:
-1. Do not attempt Modbus while SupplicantState is not COMPLETED or IP is 0.0.0.0.
-2. Wait for DHCP/IP after switching to NETGEAR_2GEXT.
-3. Verify restoration using Modbus, not SSID text.
-4. Retry Wi-Fi request and Modbus for up to Config.UPLOAD_RESTORE_WAIT_MS.
-5. Preserve cumulative TLS 1.2 and URL/API key sanitation fixes.
-6. Foreground notification supports both SHL24 (API 17) and Android 8+.
+This patch intentionally does not modify LoggerService, WifiNetworkManager,
+Modbus, Database, or the logging restoration code.
 
-MainActivity must call restoreClassicNetwork(classicSsid), not the no-argument form.
+Expected SHL24 log before POST:
+TLS provider=Conscrypt ... Android API=17
+Supabase HTTPS接続開始 rows=...
+
+On success:
+Supabase batch成功 rows=...
+
+If it still fails, the log will identify Conscrypt as provider and include the exception cause chain.
