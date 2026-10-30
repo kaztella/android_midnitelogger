@@ -84,6 +84,7 @@ public class LoggerService extends Service {
 
             // SSID is diagnostic information only. Modbus success is authoritative.
             if (tryClassicRead("通常周期")) {
+                tryRescueOldestDailyLogOnce();
                 if (now - lastUploadAttemptMs >= Config.UPLOAD_RETRY_COOLDOWN_MS) {
                     String candidate = wifi.findUploadNetworkInScanResults(uploadSsids);
                     if (candidate != null) {
@@ -131,6 +132,29 @@ public class LoggerService extends Service {
         } catch (Exception e) {
             db.event("ERROR", reason + ": Classic Modbus失敗: " + e.toString());
             return false;
+        }
+    }
+
+    private void tryRescueOldestDailyLogOnce() {
+        SharedPreferences prefs = getSharedPreferences(Config.PREFS, 0);
+        if (prefs.getBoolean("daily_oldest_rescue_done", false)) return;
+        final Modbus.L log = new Modbus.L() {
+            @Override public void log(String level, String message) { db.event(level, message); }
+        };
+        try {
+            db.event("INFO", "DailyLog最古位置探索開始");
+            DailyLogOldestFinder.Result found = new DailyLogOldestFinder(log).find();
+            DailyLogRecord row = new ClassicReader(log).readDailyLog(found.oldestDayIndex);
+            long id = db.insertDailyLog(row);
+            if (!db.hasDailyLogDate(row.logDate))
+                throw new IllegalStateException("SQLite保存確認失敗 date=" + row.logDate);
+            prefs.edit().putBoolean("daily_oldest_rescue_done", true)
+                    .putInt("daily_oldest_index", found.oldestDayIndex)
+                    .putString("daily_oldest_date", row.logDate).apply();
+            db.event("OK", "DailyLog最古1件救出完了 index=" + found.oldestDayIndex
+                    + " date=" + row.logDate + " rowId=" + id + " probes=" + found.probes);
+        } catch (Exception e) {
+            db.event("ERROR", "DailyLog最古1件救出失敗: " + e.toString());
         }
     }
 

@@ -21,7 +21,7 @@ import java.util.Locale;
 
 public class Database extends SQLiteOpenHelper {
     public static final String NAME = "midnite.db";
-    private static final int VER = 3;
+    private static final int VER = 4;
     private final Context ctx;
 
     public Database(Context c) {
@@ -34,6 +34,7 @@ public class Database extends SQLiteOpenHelper {
         d.execSQL("CREATE TABLE event(id INTEGER PRIMARY KEY AUTOINCREMENT,ts TEXT NOT NULL,level TEXT NOT NULL,message TEXT NOT NULL)");
         d.execSQL("CREATE INDEX idx_log_uploaded ON log(uploaded,id)");
         d.execSQL("CREATE INDEX idx_event_ts ON event(ts)");
+        d.execSQL("CREATE TABLE daily_log(id INTEGER PRIMARY KEY AUTOINCREMENT,log_date TEXT NOT NULL UNIQUE,log_time TEXT NOT NULL,day_index INTEGER NOT NULL,energy_kwh REAL,amp_hours INTEGER,float_seconds INTEGER,high_power_w INTEGER,high_fet_temp REAL,high_pv_v REAL,high_battery_v REAL,collected_at TEXT NOT NULL,uploaded INTEGER DEFAULT 0)");
     }
 
     public void onUpgrade(SQLiteDatabase d, int a, int b) {
@@ -42,6 +43,9 @@ public class Database extends SQLiteOpenHelper {
         }
         if (a < 3) {
             try { d.execSQL("CREATE INDEX idx_event_ts ON event(ts)"); } catch (Exception ignored) {}
+        }
+        if (a < 4) {
+            d.execSQL("CREATE TABLE IF NOT EXISTS daily_log(id INTEGER PRIMARY KEY AUTOINCREMENT,log_date TEXT NOT NULL UNIQUE,log_time TEXT NOT NULL,day_index INTEGER NOT NULL,energy_kwh REAL,amp_hours INTEGER,float_seconds INTEGER,high_power_w INTEGER,high_fet_temp REAL,high_pv_v REAL,high_battery_v REAL,collected_at TEXT NOT NULL,uploaded INTEGER DEFAULT 0)");
         }
     }
 
@@ -67,6 +71,24 @@ public class Database extends SQLiteOpenHelper {
         v.put("wb_precise_a", r.wbPreciseA);
         v.put("uploaded", 0);
         return v;
+    }
+
+    public long insertDailyLog(DailyLogRecord r) {
+        ContentValues v = new ContentValues();
+        v.put("log_date", r.logDate); v.put("log_time", r.logTime); v.put("day_index", r.dayIndex);
+        v.put("energy_kwh", r.energyKwh); v.put("amp_hours", r.ampHours);
+        v.put("float_seconds", r.floatSeconds); v.put("high_power_w", r.highPowerW);
+        v.put("high_fet_temp", r.highFetTemp); v.put("high_pv_v", r.highPvV);
+        v.put("high_battery_v", r.highBatteryV); v.put("collected_at", r.collectedAt);
+        v.put("uploaded", 0);
+        return getWritableDatabase().insertWithOnConflict("daily_log", null, v,
+                SQLiteDatabase.CONFLICT_IGNORE);
+    }
+
+    public boolean hasDailyLogDate(String date) {
+        Cursor c = getReadableDatabase().rawQuery(
+                "SELECT 1 FROM daily_log WHERE log_date=? LIMIT 1", new String[]{date});
+        try { return c.moveToFirst(); } finally { c.close(); }
     }
 
     public void event(String level, String msg) {

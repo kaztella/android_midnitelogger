@@ -1,5 +1,10 @@
 package jp.terada.midnitelogger;
 
+import java.text.SimpleDateFormat;
+import java.util.Calendar;
+import java.util.GregorianCalendar;
+import java.util.Locale;
+
 public class ClassicReader {
     private final Modbus modbus;
 
@@ -62,5 +67,50 @@ public class ClassicReader {
         record.wbA = s16(w[6]) / 10.0;
         record.wbPreciseA = s16(p[0]) / 100.0;
         return record;
+    }
+    public static final class DailyTimestamp {
+        public final Calendar calendar;
+        public final String date;
+        public final String time;
+        DailyTimestamp(Calendar calendar, String date, String time) {
+            this.calendar = calendar; this.date = date; this.time = time;
+        }
+    }
+
+    public DailyTimestamp readDailyTimestamp(int dayIndex) throws Exception {
+        int[] v = modbus.readDailyLogCategories(Config.CLASSIC_IP, Config.MODBUS_PORT,
+                Config.UNIT_ID, dayIndex, new int[]{3, 6});
+        return decodeTimestamp(v[0], v[1]);
+    }
+
+    public DailyLogRecord readDailyLog(int dayIndex) throws Exception {
+        int[] v = modbus.readDailyLog(Config.CLASSIC_IP, Config.MODBUS_PORT,
+                Config.UNIT_ID, dayIndex);
+        DailyTimestamp t = decodeTimestamp(v[3], v[6]);
+        DailyLogRecord r = new DailyLogRecord();
+        r.logDate = t.date; r.logTime = t.time; r.dayIndex = dayIndex;
+        r.energyKwh = v[0] / 10.0; r.ampHours = v[1]; r.floatSeconds = v[2];
+        r.highPowerW = v[4]; r.highFetTemp = s16(v[5]) / 10.0;
+        r.highPvV = v[7] / 10.0; r.highBatteryV = v[8] / 10.0;
+        r.collectedAt = Time.now();
+        return r;
+    }
+
+    private static DailyTimestamp decodeTimestamp(int low, int high) {
+        int year = 2000 + ((low >>> 9) & 0x3f);
+        int month = low & 0x0f;
+        int day = (low >>> 4) & 0x1f;
+        int hour = (high >>> 6) & 0x1f;
+        int minute = high & 0x3f;
+        GregorianCalendar cal = new GregorianCalendar();
+        cal.setLenient(false); cal.clear(); cal.set(year, month - 1, day, hour, minute, 0);
+        cal.getTime();
+        return new DailyTimestamp(cal, format(cal, "yyyy-MM-dd"), format(cal, "HH:mm"));
+    }
+
+    private static String format(Calendar c, String pattern) {
+        SimpleDateFormat f = new SimpleDateFormat(pattern, Locale.US);
+        f.setTimeZone(c.getTimeZone());
+        return f.format(c.getTime());
     }
 }
