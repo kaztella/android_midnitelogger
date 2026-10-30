@@ -226,8 +226,30 @@ public class Database extends SQLiteOpenHelper {
         SQLiteDatabase d = getWritableDatabase();
         d.execSQL("ATTACH DATABASE '" + f.getAbsolutePath() + "' AS backup");
         try {
+            long merged = 0;
+
             d.execSQL("INSERT OR IGNORE INTO log(ts,battery_v,pv_v,classic_a,pv_a,watts,daily_kwh,charge_stage,classic_state,battery_temp,fet_temp,pcb_temp,wb_a,wb_precise_a,uploaded) SELECT ts,battery_v,pv_v,classic_a,pv_a,watts,daily_kwh,charge_stage,classic_state,battery_temp,fet_temp,pcb_temp,wb_a,wb_precise_a,uploaded FROM backup.log");
-            return d.compileStatement("SELECT changes() ").simpleQueryForLong();
+            merged += d.compileStatement("SELECT changes()").simpleQueryForLong();
+
+            // V4以降のバックアップにdaily_logがあれば統合する。
+            // V1.1.0など旧バックアップにはテーブルがないため、その場合は通常ログだけ復元する。
+            boolean backupHasDailyLog = false;
+            Cursor tableCursor = d.rawQuery(
+                    "SELECT 1 FROM backup.sqlite_master WHERE type='table' AND name='daily_log' LIMIT 1",
+                    null);
+            try {
+                backupHasDailyLog = tableCursor.moveToFirst();
+            } finally {
+                tableCursor.close();
+            }
+
+            if (backupHasDailyLog) {
+                d.execSQL("INSERT OR IGNORE INTO daily_log(log_date,log_time,day_index,energy_kwh,amp_hours,float_seconds,high_power_w,high_fet_temp,high_pv_v,high_battery_v,collected_at,uploaded) "
+                        + "SELECT log_date,log_time,day_index,energy_kwh,amp_hours,float_seconds,high_power_w,high_fet_temp,high_pv_v,high_battery_v,collected_at,uploaded FROM backup.daily_log");
+                merged += d.compileStatement("SELECT changes()").simpleQueryForLong();
+            }
+
+            return merged;
         } finally {
             d.execSQL("DETACH DATABASE backup");
         }
