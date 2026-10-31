@@ -204,6 +204,8 @@ public class Modbus {
         if (length < 2 || length > 254) throw new IOException("Invalid MBAP length=" + length);
         byte[] pdu = new byte[length - 1];
         try { in.readFully(pdu); } catch (EOFException e) { throw new IOException("Short FC104 response", e); }
+        logger.log("INFO", "FC104 RAW MBAP=" + hex(header)
+                + " PDU_LEN=" + pdu.length + " PDU=" + hex(pdu));
         int fc = pdu[0] & 0xff;
         if ((fc & 0x80) != 0) throw new IOException("Modbus exception=" + (pdu.length > 1 ? pdu[1] & 0xff : -1));
         if (fc != 0x68) throw new IOException("Unexpected FC=" + fc);
@@ -214,11 +216,26 @@ public class Modbus {
         long responseAddress = ((long)(pdu[5] & 0xff) << 24) | ((long)(pdu[6] & 0xff) << 16)
                 | ((long)(pdu[7] & 0xff) << 8) | (long)(pdu[8] & 0xff);
         if (device != 5 || dataLength != 2 || reserved != 0 || pdu.length != 11)
-            throw new IOException("Invalid FC104 response format");
+            throw new IOException("Invalid FC104 response format"
+                    + " device=" + device + " dataLength=" + dataLength
+                    + " reserved=" + reserved + " pduLength=" + pdu.length
+                    + " RAW=" + hex(pdu));
         if (responseAddress != (address & 0xffffffffL)) throw new IOException("FC104 address mismatch");
         int value = u16(pdu, 9);
         logger.log("RECV", "FC=104 Category=" + category + " DayIndex=" + dayIndex + " Raw=" + value);
         return value;
+    }
+
+    private static String hex(byte[] data) {
+        if (data == null) return "null";
+        StringBuilder b = new StringBuilder(data.length * 3);
+        for (int i = 0; i < data.length; i++) {
+            if (i > 0) b.append(' ');
+            int v = data[i] & 0xff;
+            if (v < 16) b.append('0');
+            b.append(Integer.toHexString(v).toUpperCase());
+        }
+        return b.toString();
     }
 
     private static int u16(byte[] data, int offset) {
