@@ -35,6 +35,7 @@ public class Database extends SQLiteOpenHelper {
         d.execSQL("CREATE INDEX idx_log_uploaded ON log(uploaded,id)");
         d.execSQL("CREATE INDEX idx_event_ts ON event(ts)");
         d.execSQL("CREATE TABLE daily_log(id INTEGER PRIMARY KEY AUTOINCREMENT,log_date TEXT NOT NULL UNIQUE,log_time TEXT NOT NULL,day_index INTEGER NOT NULL,energy_kwh REAL,amp_hours INTEGER,float_seconds INTEGER,high_power_w INTEGER,high_fet_temp REAL,high_pv_v REAL,high_battery_v REAL,collected_at TEXT NOT NULL,uploaded INTEGER DEFAULT 0)");
+        d.execSQL("CREATE INDEX idx_daily_log_uploaded ON daily_log(uploaded,id)");
     }
 
     public void onUpgrade(SQLiteDatabase d, int a, int b) {
@@ -46,6 +47,7 @@ public class Database extends SQLiteOpenHelper {
         }
         if (a < 4) {
             d.execSQL("CREATE TABLE IF NOT EXISTS daily_log(id INTEGER PRIMARY KEY AUTOINCREMENT,log_date TEXT NOT NULL UNIQUE,log_time TEXT NOT NULL,day_index INTEGER NOT NULL,energy_kwh REAL,amp_hours INTEGER,float_seconds INTEGER,high_power_w INTEGER,high_fet_temp REAL,high_pv_v REAL,high_battery_v REAL,collected_at TEXT NOT NULL,uploaded INTEGER DEFAULT 0)");
+            d.execSQL("CREATE INDEX IF NOT EXISTS idx_daily_log_uploaded ON daily_log(uploaded,id)");
         }
     }
 
@@ -76,19 +78,39 @@ public class Database extends SQLiteOpenHelper {
     public long insertDailyLog(DailyLogRecord r) {
         ContentValues v = new ContentValues();
         v.put("log_date", r.logDate); v.put("log_time", r.logTime); v.put("day_index", r.dayIndex);
-        v.put("energy_kwh", r.energyKwh); v.put("amp_hours", r.ampHours);
-        v.put("float_seconds", r.floatSeconds); v.put("high_power_w", r.highPowerW);
-        v.put("high_fet_temp", r.highFetTemp); v.put("high_pv_v", r.highPvV);
-        v.put("high_battery_v", r.highBatteryV); v.put("collected_at", r.collectedAt);
-        v.put("uploaded", 0);
-        return getWritableDatabase().insertWithOnConflict("daily_log", null, v,
-                SQLiteDatabase.CONFLICT_IGNORE);
+        v.put("energy_kwh", r.energyKwh); v.put("amp_hours", r.ampHours); v.put("float_seconds", r.floatSeconds);
+        v.put("high_power_w", r.highPowerW); v.put("high_fet_temp", r.highFetTemp);
+        v.put("high_pv_v", r.highPvV); v.put("high_battery_v", r.highBatteryV);
+        v.put("collected_at", r.collectedAt); v.put("uploaded", 0);
+        return getWritableDatabase().insertWithOnConflict("daily_log", null, v, SQLiteDatabase.CONFLICT_IGNORE);
     }
 
     public boolean hasDailyLogDate(String date) {
-        Cursor c = getReadableDatabase().rawQuery(
-                "SELECT 1 FROM daily_log WHERE log_date=? LIMIT 1", new String[]{date});
+        Cursor c = getReadableDatabase().rawQuery("SELECT 1 FROM daily_log WHERE log_date=? LIMIT 1", new String[]{date});
         try { return c.moveToFirst(); } finally { c.close(); }
+    }
+
+    public List<DailyLogRecord> pendingDailyLogs(int n) {
+        ArrayList<DailyLogRecord> rows = new ArrayList<DailyLogRecord>();
+        Cursor c = getReadableDatabase().rawQuery("SELECT * FROM daily_log WHERE uploaded=0 ORDER BY log_date LIMIT " + Math.max(1, n), null);
+        try {
+            while (c.moveToNext()) {
+                DailyLogRecord r = new DailyLogRecord();
+                r.id=c.getLong(c.getColumnIndex("id")); r.logDate=c.getString(c.getColumnIndex("log_date")); r.logTime=c.getString(c.getColumnIndex("log_time"));
+                r.dayIndex=c.getInt(c.getColumnIndex("day_index")); r.energyKwh=c.getDouble(c.getColumnIndex("energy_kwh")); r.ampHours=c.getInt(c.getColumnIndex("amp_hours"));
+                r.floatSeconds=c.getInt(c.getColumnIndex("float_seconds")); r.highPowerW=c.getInt(c.getColumnIndex("high_power_w")); r.highFetTemp=c.getDouble(c.getColumnIndex("high_fet_temp"));
+                r.highPvV=c.getDouble(c.getColumnIndex("high_pv_v")); r.highBatteryV=c.getDouble(c.getColumnIndex("high_battery_v")); r.collectedAt=c.getString(c.getColumnIndex("collected_at"));
+                rows.add(r);
+            }
+        } finally { c.close(); }
+        return rows;
+    }
+
+    public void markDailyLogsUploaded(List<DailyLogRecord> rows) {
+        if (rows.isEmpty()) return;
+        SQLiteDatabase d=getWritableDatabase(); d.beginTransaction();
+        try { ContentValues v=new ContentValues(); v.put("uploaded",1); for(DailyLogRecord r:rows) d.update("daily_log",v,"id=?",new String[]{String.valueOf(r.id)}); d.setTransactionSuccessful(); }
+        finally { d.endTransaction(); }
     }
 
     public void event(String level, String msg) {
@@ -226,29 +248,15 @@ public class Database extends SQLiteOpenHelper {
         SQLiteDatabase d = getWritableDatabase();
         d.execSQL("ATTACH DATABASE '" + f.getAbsolutePath() + "' AS backup");
         try {
-            long merged = 0;
-
+            long merged=0;
             d.execSQL("INSERT OR IGNORE INTO log(ts,battery_v,pv_v,classic_a,pv_a,watts,daily_kwh,charge_stage,classic_state,battery_temp,fet_temp,pcb_temp,wb_a,wb_precise_a,uploaded) SELECT ts,battery_v,pv_v,classic_a,pv_a,watts,daily_kwh,charge_stage,classic_state,battery_temp,fet_temp,pcb_temp,wb_a,wb_precise_a,uploaded FROM backup.log");
             merged += d.compileStatement("SELECT changes()").simpleQueryForLong();
-
-            // V4以降のバックアップにdaily_logがあれば統合する。
-            // V1.1.0など旧バックアップにはテーブルがないため、その場合は通常ログだけ復元する。
-            boolean backupHasDailyLog = false;
-            Cursor tableCursor = d.rawQuery(
-                    "SELECT 1 FROM backup.sqlite_master WHERE type='table' AND name='daily_log' LIMIT 1",
-                    null);
-            try {
-                backupHasDailyLog = tableCursor.moveToFirst();
-            } finally {
-                tableCursor.close();
-            }
-
-            if (backupHasDailyLog) {
-                d.execSQL("INSERT OR IGNORE INTO daily_log(log_date,log_time,day_index,energy_kwh,amp_hours,float_seconds,high_power_w,high_fet_temp,high_pv_v,high_battery_v,collected_at,uploaded) "
-                        + "SELECT log_date,log_time,day_index,energy_kwh,amp_hours,float_seconds,high_power_w,high_fet_temp,high_pv_v,high_battery_v,collected_at,uploaded FROM backup.daily_log");
+            Cursor tc=d.rawQuery("SELECT 1 FROM backup.sqlite_master WHERE type='table' AND name='daily_log' LIMIT 1",null);
+            boolean hasDaily; try { hasDaily=tc.moveToFirst(); } finally { tc.close(); }
+            if(hasDaily){
+                d.execSQL("INSERT OR IGNORE INTO daily_log(log_date,log_time,day_index,energy_kwh,amp_hours,float_seconds,high_power_w,high_fet_temp,high_pv_v,high_battery_v,collected_at,uploaded) SELECT log_date,log_time,day_index,energy_kwh,amp_hours,float_seconds,high_power_w,high_fet_temp,high_pv_v,high_battery_v,collected_at,uploaded FROM backup.daily_log");
                 merged += d.compileStatement("SELECT changes()").simpleQueryForLong();
             }
-
             return merged;
         } finally {
             d.execSQL("DETACH DATABASE backup");

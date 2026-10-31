@@ -109,6 +109,41 @@ public class SupabaseUploader {
         return uploaded;
     }
 
+    public int uploadDailyLogs() throws Exception {
+        SharedPreferences preferences=context.getSharedPreferences(Config.PREFS,0);
+        String normalUrl=clean(preferences.getString("supabase_rpc_url",""));
+        String key=clean(preferences.getString("supabase_key",""));
+        String deviceId=clean(preferences.getString("device_id","shl24-01"));
+        if(normalUrl.length()==0 || key.length()==0) throw new IOException("Supabase URL/API key未設定");
+        int rpcPos=normalUrl.indexOf("/rest/v1/rpc/");
+        if(rpcPos<0) throw new IOException("Supabase RPC URL形式が不正です");
+        String url=normalUrl.substring(0,rpcPos)+"/rest/v1/rpc/upsert_classic_daily_logs";
+        List<DailyLogRecord> rows=db.pendingDailyLogs(Config.BATCH_SIZE);
+        if(rows.isEmpty()) return 0;
+        JSONArray records=new JSONArray();
+        for(DailyLogRecord r:rows){
+            JSONObject j=new JSONObject(); j.put("device_id",deviceId); j.put("log_date",r.logDate);
+            j.put("logged_at",r.logDate+"T"+r.logTime+":00+09:00"); j.put("day_index",r.dayIndex);
+            j.put("energy_kwh",r.energyKwh); j.put("amp_hours",r.ampHours); j.put("float_seconds",r.floatSeconds);
+            j.put("high_power_w",r.highPowerW); j.put("high_fet_temp",r.highFetTemp); j.put("high_pv_v",r.highPvV); j.put("high_battery_v",r.highBatteryV);
+            j.put("collected_at",r.collectedAt.replace(' ','T')+"+09:00"); records.put(j);
+        }
+        JSONObject request=new JSONObject(); request.put("p_rows",records);
+        URL endpoint=new URL(url); HttpURLConnection raw=(HttpURLConnection)endpoint.openConnection();
+        if(!(raw instanceof HttpsURLConnection)) throw new IOException("HTTPS connection required");
+        HttpsURLConnection connection=(HttpsURLConnection)raw;
+        if(Build.VERSION.SDK_INT<21) connection.setSSLSocketFactory(ConscryptTls.getSocketFactory());
+        connection.setConnectTimeout(15000); connection.setReadTimeout(20000); connection.setRequestMethod("POST"); connection.setDoOutput(true);
+        connection.setRequestProperty("apikey",key); connection.setRequestProperty("Content-Type","application/json; charset=utf-8"); connection.setRequestProperty("Accept","application/json"); connection.setRequestProperty("Connection","close");
+        byte[] payload=request.toString().getBytes("UTF-8"); connection.setFixedLengthStreamingMode(payload.length);
+        db.event("INFO","DailyLog Supabase HTTPS接続開始 rows="+rows.size()+" bytes="+payload.length);
+        try {
+            OutputStream output=connection.getOutputStream(); output.write(payload); output.flush(); output.close();
+            int status=connection.getResponseCode(); if(status<200 || status>=300) throw new IOException("DailyLog Supabase HTTP "+status+" "+read(connection.getErrorStream()));
+            read(connection.getInputStream()); db.markDailyLogsUploaded(rows); db.event("OK","DailyLog Supabase送信成功 rows="+rows.size()); return rows.size();
+        } finally { connection.disconnect(); }
+    }
+
     private static String clean(String value) {
         return value == null ? "" : value.replace("\r", "").replace("\n", "").trim();
     }

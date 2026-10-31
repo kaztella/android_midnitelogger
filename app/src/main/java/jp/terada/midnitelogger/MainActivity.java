@@ -129,6 +129,23 @@ public class MainActivity extends Activity {
         device = addEdit(root);
         addText(root, "Classic Wi‑Fi SSID");
         classicWifiSsid = addEdit(root);
+        addButton(actionRow, "DailyLog Upload", new View.OnClickListener() {
+            @Override public void onClick(View view) {
+                saveSettings();
+                new Thread(new Runnable() {
+                    @Override public void run() {
+                        try {
+                            int count = new SupabaseUploader(MainActivity.this, db).uploadDailyLogs();
+                            db.event("OK", "DailyLog Supabase送信 " + count + "件");
+                        } catch (Exception ex) {
+                            db.event("ERROR", "DailyLog Upload: " + ex.getMessage());
+                        }
+                        handler.post(new Runnable() { @Override public void run() { refresh(); } });
+                    }
+                }).start();
+            }
+        });
+
         addText(root, "Upload Wi‑Fi SSIDs");
         uploadWifiSsidList = addEdit(root);
         addText(root, "現在の Wi‑Fi");
