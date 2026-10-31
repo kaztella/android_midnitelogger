@@ -112,8 +112,6 @@ public class Modbus {
             throw new IOException("Short Modbus response Addr=" + addr, ex);
         }
 
-        logger.log("INFO", "FC104 RAW MBAP=" + hex(header)
-                + " PDU_LEN=" + pdu.length + " PDU=" + hex(pdu));
         int functionCode = pdu[0] & 0xff;
         if ((functionCode & 0x80) != 0) {
             int exceptionCode = pdu.length > 1 ? pdu[1] & 0xff : -1;
@@ -146,17 +144,39 @@ public class Modbus {
         return values;
     }
 
-    private static String hex(byte[] data) {
-        if (data == null) return "null";
-        StringBuilder b = new StringBuilder(data.length * 3);
-        for (int i = 0; i < data.length; i++) {
-            if (i > 0) b.append(' ');
-            int v = data[i] & 0xff;
-            if (v < 16) b.append('0');
-            b.append(Integer.toHexString(v).toUpperCase());
-        }
-        return b.toString();
+    public int[] readDailyLogCategories(String host, int port, int unit, int dayIndex, int[] categories) throws IOException {
+        if (categories == null || categories.length == 0) throw new IllegalArgumentException("categories is empty");
+        Socket socket = new Socket();
+        try {
+            logger.log("INFO", "TCP接続開始 " + host + ":" + port);
+            socket.connect(new InetSocketAddress(host, port), 5000); socket.setSoTimeout(5000); socket.setTcpNoDelay(true);
+            logger.log("OK", "TCP接続成功");
+            DataOutputStream out = new DataOutputStream(socket.getOutputStream()); DataInputStream in = new DataInputStream(socket.getInputStream());
+            int[] values = new int[categories.length];
+            for (int i=0;i<categories.length;i++) values[i]=readDailyOnConnection(out,in,unit,categories[i],dayIndex);
+            return values;
+        } finally { try { socket.close(); } catch(IOException ignored) {} logger.log("INFO","TCP切断"); }
     }
+
+    public int[] readDailyLog(String host, int port, int unit, int dayIndex) throws IOException {
+        return readDailyLogCategories(host,port,unit,dayIndex,new int[]{0,1,2,3,4,5,6,7,8});
+    }
+
+    private int readDailyOnConnection(DataOutputStream out, DataInputStream in, int unit, int category, int dayIndex) throws IOException {
+        int transactionId=tx++ & 0xffff; int address=((category & 0x3f)<<10)|(dayIndex & 0x03ff);
+        ByteArrayOutputStream buffer=new ByteArrayOutputStream(16); DataOutputStream request=new DataOutputStream(buffer);
+        request.writeShort(transactionId); request.writeShort(0); request.writeShort(10); request.writeByte(unit); request.writeByte(0x68); request.writeByte(5); request.writeByte(2); request.writeShort(0); request.writeInt(address); request.flush();
+        logger.log("SEND","FC=104 Device=5 Category="+category+" DayIndex="+dayIndex); out.write(buffer.toByteArray()); out.flush();
+        byte[] header=new byte[7]; in.readFully(header); int length=u16(header,4); if(u16(header,0)!=transactionId) throw new IOException("Transaction ID mismatch"); if(u16(header,2)!=0) throw new IOException("Protocol ID mismatch"); if((header[6]&0xff)!=(unit&0xff)) throw new IOException("Unit ID mismatch");
+        byte[] pdu=new byte[length-1]; in.readFully(pdu); logger.log("INFO","FC104 RAW MBAP="+hex(header)+" PDU_LEN="+pdu.length+" PDU="+hex(pdu));
+        if((pdu[0]&0xff)!=0x68) throw new IOException("Unexpected FC="+(pdu[0]&0xff));
+        if(pdu.length<11) throw new IOException("Short FC104 PDU="+pdu.length);
+        int device=pdu[1]&0xff, dataLength=pdu[2]&0xff, reserved=u16(pdu,3);
+        if(device!=5 || dataLength!=2 || reserved!=0 || pdu.length!=11) throw new IOException("Invalid FC104 response format device="+device+" dataLength="+dataLength+" reserved="+reserved+" pduLength="+pdu.length+" RAW="+hex(pdu));
+        return u16(pdu,9);
+    }
+
+    private static String hex(byte[] data) { StringBuilder b=new StringBuilder(); for(int i=0;i<data.length;i++){ if(i>0)b.append(' '); int v=data[i]&0xff; if(v<16)b.append('0'); b.append(Integer.toHexString(v).toUpperCase()); } return b.toString(); }
 
     private static int u16(byte[] data, int offset) {
         return ((data[offset] & 0xff) << 8) | (data[offset + 1] & 0xff);
