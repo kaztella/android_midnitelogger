@@ -1,0 +1,8 @@
+Build fix v5:
+- restores ClassicReader.DailyTimestamp
+- restores ClassicReader.readDailyTimestamp(int)
+- restores ClassicReader.readDailyLog(int)
+- adds Modbus.readDailyLogCategories(...)
+- adds Modbus.readDailyLog(...)
+- adds Modbus.readDailyLogBlock(String,int,int,int,int)
+- keeps RAW diagnostic UI and result display

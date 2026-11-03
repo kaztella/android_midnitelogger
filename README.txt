@@ -1,6 +1,3 @@
-Float RAW Diagnostic v2
-Fixes the GitHub build errors shown for v1:
-- uses Modbus.L (not nonexistent Modbus.Logger)
-- includes Modbus.readDailyLogBlock(String,int,int,int,int)
-- includes readDailyLogCategories/readDailyLog compatibility APIs
-Diagnostic is read-only: no SQLite DailyLog write and no Supabase upload.
+MidNite Logger Ah/Float/FET RAW diagnostic UI v4
+Includes Start/End Index, RAW diagnostic button, clear button, and on-screen results.
+Read-only diagnostic: no daily_log update and no Supabase upload.
