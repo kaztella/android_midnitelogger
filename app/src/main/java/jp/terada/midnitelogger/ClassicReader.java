@@ -1,4 +1,8 @@
 package jp.terada.midnitelogger;
+import java.text.SimpleDateFormat;
+import java.util.Calendar;
+import java.util.GregorianCalendar;
+import java.util.Locale;
 
 public class ClassicReader {
     private final Modbus modbus;
@@ -63,4 +67,20 @@ public class ClassicReader {
         record.wbPreciseA = s16(p[0]) / 100.0;
         return record;
     }
+
+    public DailyLogRecord readDailyLog(int dayIndex) throws Exception {
+        if (dayIndex < 1 || dayIndex > 1023) throw new IllegalArgumentException("dayIndex must be 1..1023: " + dayIndex);
+        int[] v = modbus.readDailyLog(Config.CLASSIC_IP, Config.MODBUS_PORT, Config.UNIT_ID, dayIndex);
+        int low=v[3], high=v[6];
+        int year=2000+((low >>> 9)&0x3f), month=low&0x0f, day=(low >>> 4)&0x1f;
+        int hour=(high >>> 6)&0x1f, minute=high&0x3f;
+        GregorianCalendar cal=new GregorianCalendar(); cal.setLenient(false); cal.clear();
+        cal.set(year,month-1,day,hour,minute,0); cal.getTime();
+        DailyLogRecord r=new DailyLogRecord();
+        r.logDate=format(cal,"yyyy-MM-dd"); r.logTime=format(cal,"HH:mm"); r.dayIndex=dayIndex;
+        r.energyKwh=v[0]/10.0; r.ampHours=v[1]; r.floatSeconds=v[2]; r.highPowerW=v[4];
+        r.highFetTemp=s16(v[5])/10.0; r.highPvV=v[7]/10.0; r.highBatteryV=v[8]/10.0; r.collectedAt=Time.now();
+        return r;
+    }
+    private static String format(Calendar c,String pattern){ SimpleDateFormat f=new SimpleDateFormat(pattern,Locale.US); f.setTimeZone(c.getTimeZone()); return f.format(c.getTime()); }
 }

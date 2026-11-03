@@ -147,4 +147,42 @@ public class Modbus {
     private static int u16(byte[] data, int offset) {
         return ((data[offset] & 0xff) << 8) | (data[offset + 1] & 0xff);
     }
+
+    public int[] readDailyLogBlock(String host,int port,int unit,int category,int dayIndex) throws IOException {
+        Socket socket=new Socket();
+        try {
+            socket.connect(new InetSocketAddress(host,port),5000); socket.setSoTimeout(5000); socket.setTcpNoDelay(true);
+            DataOutputStream out=new DataOutputStream(socket.getOutputStream()); DataInputStream in=new DataInputStream(socket.getInputStream());
+            int transactionId=tx++ & 0xffff; int address=((category&0x3f)<<10)|(dayIndex&0x03ff);
+            ByteArrayOutputStream buffer=new ByteArrayOutputStream(16); DataOutputStream request=new DataOutputStream(buffer);
+            request.writeShort(transactionId); request.writeShort(0); request.writeShort(10); request.writeByte(unit); request.writeByte(0x68);
+            request.writeByte(5); request.writeByte(2); request.writeShort(0); request.writeInt(address); request.flush();
+            out.write(buffer.toByteArray()); out.flush(); byte[] header=new byte[7]; in.readFully(header);
+            int length=u16(header,4); byte[] pdu=new byte[length-1]; in.readFully(pdu);
+            if((pdu[0]&0xff)!=0x68) throw new IOException("Unexpected FC="+(pdu[0]&0xff));
+            if(pdu.length!=73) throw new IOException("FC104 block PDU expected=73 actual="+pdu.length);
+            int[] words=new int[32]; for(int i=0;i<32;i++) words[i]=u16le(pdu,9+i*2); return words;
+        } finally { try{socket.close();}catch(IOException ignored){} }
+    }
+    public int[] readDailyLog(String host,int port,int unit,int dayIndex) throws IOException {
+        int[] values=new int[9];
+        Socket socket=new Socket();
+        try {
+            socket.connect(new InetSocketAddress(host,port),5000); socket.setSoTimeout(5000); socket.setTcpNoDelay(true);
+            DataOutputStream out=new DataOutputStream(socket.getOutputStream()); DataInputStream in=new DataInputStream(socket.getInputStream());
+            for(int category=0;category<9;category++) values[category]=readDailyOnConnection(out,in,unit,category,dayIndex);
+            return values;
+        } finally { try{socket.close();}catch(IOException ignored){} }
+    }
+    private int readDailyOnConnection(DataOutputStream out,DataInputStream in,int unit,int category,int dayIndex) throws IOException {
+        int transactionId=tx++ & 0xffff; int address=((category&0x3f)<<10)|(dayIndex&0x03ff);
+        ByteArrayOutputStream buffer=new ByteArrayOutputStream(16); DataOutputStream request=new DataOutputStream(buffer);
+        request.writeShort(transactionId); request.writeShort(0); request.writeShort(10); request.writeByte(unit); request.writeByte(0x68);
+        request.writeByte(5); request.writeByte(2); request.writeShort(0); request.writeInt(address); request.flush();
+        out.write(buffer.toByteArray()); out.flush(); byte[] header=new byte[7]; in.readFully(header);
+        int length=u16(header,4); byte[] pdu=new byte[length-1]; in.readFully(pdu);
+        if((pdu[0]&0xff)!=0x68) throw new IOException("Unexpected FC="+(pdu[0]&0xff));
+        return u16le(pdu,pdu.length-2);
+    }
+    private static int u16le(byte[] data,int offset){ return (data[offset]&0xff)|((data[offset+1]&0xff)<<8); }
 }
