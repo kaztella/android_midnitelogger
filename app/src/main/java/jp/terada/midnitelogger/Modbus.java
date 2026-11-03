@@ -164,6 +164,26 @@ public class Modbus {
             int[] words=new int[32]; for(int i=0;i<32;i++) words[i]=u16le(pdu,9+i*2); return words;
         } finally { try{socket.close();}catch(IOException ignored){} }
     }
+    public int[] readDailyLogCategories(String host, int port, int unit, int dayIndex, int[] categories) throws IOException {
+        if (dayIndex < 0 || dayIndex > 1023) throw new IllegalArgumentException("invalid dayIndex=" + dayIndex);
+        if (categories == null || categories.length == 0) throw new IllegalArgumentException("categories is empty");
+        Socket socket = new Socket();
+        try {
+            socket.connect(new InetSocketAddress(host, port), 5000);
+            socket.setSoTimeout(5000);
+            socket.setTcpNoDelay(true);
+            DataOutputStream out = new DataOutputStream(socket.getOutputStream());
+            DataInputStream in = new DataInputStream(socket.getInputStream());
+            int[] values = new int[categories.length];
+            for (int i = 0; i < categories.length; i++) {
+                values[i] = readDailyOnConnection(out, in, unit, categories[i], dayIndex);
+            }
+            return values;
+        } finally {
+            try { socket.close(); } catch (IOException ignored) {}
+        }
+    }
+
     public int[] readDailyLog(String host,int port,int unit,int dayIndex) throws IOException {
         int[] values=new int[9];
         Socket socket=new Socket();

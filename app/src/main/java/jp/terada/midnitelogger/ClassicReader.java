@@ -68,6 +68,31 @@ public class ClassicReader {
         return record;
     }
 
+    public static final class DailyTimestamp {
+        public final Calendar calendar;
+        public final String date;
+        public final String time;
+        DailyTimestamp(Calendar calendar, String date, String time) {
+            this.calendar = calendar;
+            this.date = date;
+            this.time = time;
+        }
+    }
+
+    public DailyTimestamp readDailyTimestamp(int dayIndex) throws Exception {
+        int[] v = modbus.readDailyLogCategories(Config.CLASSIC_IP, Config.MODBUS_PORT,
+                Config.UNIT_ID, dayIndex, new int[]{3, 6});
+        int low = v[0], high = v[1];
+        int year = 2000 + ((low >>> 9) & 0x3f), month = low & 0x0f, day = (low >>> 4) & 0x1f;
+        int hour = (high >>> 6) & 0x1f, minute = high & 0x3f;
+        GregorianCalendar cal = new GregorianCalendar();
+        cal.setLenient(false);
+        cal.clear();
+        cal.set(year, month - 1, day, hour, minute, 0);
+        cal.getTime();
+        return new DailyTimestamp(cal, format(cal, "yyyy-MM-dd"), format(cal, "HH:mm"));
+    }
+
     public DailyLogRecord readDailyLog(int dayIndex) throws Exception {
         if (dayIndex < 1 || dayIndex > 1023) throw new IllegalArgumentException("dayIndex must be 1..1023: " + dayIndex);
         int[] v = modbus.readDailyLog(Config.CLASSIC_IP, Config.MODBUS_PORT, Config.UNIT_ID, dayIndex);
