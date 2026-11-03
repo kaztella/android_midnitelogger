@@ -147,36 +147,4 @@ public class Modbus {
     private static int u16(byte[] data, int offset) {
         return ((data[offset] & 0xff) << 8) | (data[offset + 1] & 0xff);
     }
-
-    public int[] readDailyLogCategories(String host,int port,int unit,int dayIndex,int[] categories) throws IOException {
-        if(dayIndex<0||dayIndex>1023) throw new IllegalArgumentException("invalid dayIndex="+dayIndex);
-        if(categories==null||categories.length==0) throw new IllegalArgumentException("categories is empty");
-        Socket socket=new Socket();
-        try { socket.connect(new InetSocketAddress(host,port),5000); socket.setSoTimeout(5000); socket.setTcpNoDelay(true);
-            DataOutputStream out=new DataOutputStream(socket.getOutputStream()); DataInputStream in=new DataInputStream(socket.getInputStream());
-            int[] values=new int[categories.length]; for(int i=0;i<categories.length;i++) values[i]=readDailyOnConnection(out,in,unit,categories[i],dayIndex); return values;
-        } finally { try{socket.close();}catch(IOException ignored){} }
-    }
-    public int[] readDailyLog(String host,int port,int unit,int dayIndex) throws IOException { return readDailyLogCategories(host,port,unit,dayIndex,new int[]{0,1,2,3,4,5,6,7,8}); }
-    public int[] readDailyLogBlock(String host,int port,int unit,int category,int dayIndex) throws IOException {
-        Socket socket=new Socket();
-        try { socket.connect(new InetSocketAddress(host,port),5000); socket.setSoTimeout(5000); socket.setTcpNoDelay(true);
-            DataOutputStream out=new DataOutputStream(socket.getOutputStream()); DataInputStream in=new DataInputStream(socket.getInputStream());
-            int transactionId=tx++&0xffff,address=((category&0x3f)<<10)|(dayIndex&0x03ff);
-            ByteArrayOutputStream buffer=new ByteArrayOutputStream(16); DataOutputStream request=new DataOutputStream(buffer);
-            request.writeShort(transactionId);request.writeShort(0);request.writeShort(10);request.writeByte(unit);request.writeByte(0x68);request.writeByte(5);request.writeByte(2);request.writeShort(0);request.writeInt(address);request.flush();
-            out.write(buffer.toByteArray());out.flush();byte[] header=new byte[7];in.readFully(header);
-            if(u16(header,0)!=transactionId||u16(header,2)!=0||(header[6]&0xff)!=(unit&0xff)) throw new IOException("FC104 block MBAP mismatch");
-            int length=u16(header,4);if(length<2||length>254)throw new IOException("FC104 block length="+length);byte[] pdu=new byte[length-1];in.readFully(pdu);
-            if(pdu.length!=73)throw new IOException("FC104 block PDU expected=73 actual="+pdu.length);
-            if((pdu[0]&0xff)!=0x68||(pdu[1]&0xff)!=5||(pdu[2]&0xff)!=2||u16(pdu,3)!=0)throw new IOException("FC104 block header invalid");
-            int[] words=new int[32];for(int i=0;i<32;i++)words[i]=u16le(pdu,9+i*2);return words;
-        } finally {try{socket.close();}catch(IOException ignored){} }
-    }
-    private int readDailyOnConnection(DataOutputStream out,DataInputStream in,int unit,int category,int dayIndex) throws IOException {
-        int transactionId=tx++&0xffff,address=((category&0x3f)<<10)|(dayIndex&0x03ff);ByteArrayOutputStream buffer=new ByteArrayOutputStream(16);DataOutputStream request=new DataOutputStream(buffer);
-        request.writeShort(transactionId);request.writeShort(0);request.writeShort(10);request.writeByte(unit);request.writeByte(0x68);request.writeByte(5);request.writeByte(2);request.writeShort(0);request.writeInt(address);request.flush();out.write(buffer.toByteArray());out.flush();
-        byte[] header=new byte[7];in.readFully(header);if(u16(header,0)!=transactionId)throw new IOException("Transaction ID mismatch");int length=u16(header,4);byte[] pdu=new byte[length-1];in.readFully(pdu);if((pdu[0]&0xff)!=0x68)throw new IOException("Unexpected FC="+(pdu[0]&0xff));return u16le(pdu,pdu.length-2);
-    }
-    private static int u16le(byte[] data,int offset){return(data[offset]&0xff)|((data[offset+1]&0xff)<<8);}
 }
