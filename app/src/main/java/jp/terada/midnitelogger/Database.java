@@ -82,7 +82,7 @@ public class Database extends SQLiteOpenHelper {
         v.put("high_power_w", r.highPowerW); v.put("high_fet_temp", r.highFetTemp);
         v.put("high_pv_v", r.highPvV); v.put("high_battery_v", r.highBatteryV);
         v.put("collected_at", r.collectedAt); v.put("uploaded", 0);
-        return getWritableDatabase().insertWithOnConflict("daily_log", null, v, SQLiteDatabase.CONFLICT_REPLACE);
+        return getWritableDatabase().insertWithOnConflict("daily_log", null, v, SQLiteDatabase.CONFLICT_IGNORE);
     }
 
     public boolean hasDailyLogDate(String date) {
