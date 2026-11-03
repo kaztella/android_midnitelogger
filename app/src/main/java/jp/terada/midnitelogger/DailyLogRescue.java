@@ -81,4 +81,37 @@ public final class DailyLogRescue {
         }catch(Exception e){return false;}
     }
     private static void clearTime(Calendar c){c.set(Calendar.HOUR_OF_DAY,0);c.set(Calendar.MINUTE,0);c.set(Calendar.SECOND,0);c.set(Calendar.MILLISECOND,0);}
+
+    /** Focused mode: scan estimated indexes with +/-7 day margin and save only matching dates. */
+    public int rescueDateRange(String startDate, String endDate) throws Exception {
+        java.text.SimpleDateFormat f = new java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US);
+        f.setLenient(false);
+        java.util.Date start = f.parse(startDate);
+        java.util.Date end = f.parse(endDate);
+        if (start.after(end)) throw new IllegalArgumentException("開始日は終了日以前にしてください");
+        Calendar today = new GregorianCalendar(); clearTime(today);
+        Calendar sc = new GregorianCalendar(); sc.setTime(start); clearTime(sc);
+        Calendar ec = new GregorianCalendar(); ec.setTime(end); clearTime(ec);
+        int newer = (int)((today.getTimeInMillis()-ec.getTimeInMillis())/86400000L);
+        int older = (int)((today.getTimeInMillis()-sc.getTimeInMillis())/86400000L);
+        int from = Math.max(1, newer - 7);
+        int to = Math.min(1023, older + 7);
+        int saved = 0;
+        db.event("INFO", "DailyLog集中救出 scan="+from+".."+to+" target="+startDate+".."+endDate);
+        for (int index=from; index<=to; index++) {
+            try {
+                ClassicReader.DailyTimestamp t = reader.readDailyTimestamp(index);
+                if (t.date.compareTo(startDate)>=0 && t.date.compareTo(endDate)<=0) {
+                    DailyLogRecord row = readRecordRetry(index);
+                    db.insertDailyLog(row);
+                    saved++;
+                    db.event("OK", "DailyLog集中救出 index="+index+" date="+row.logDate);
+                }
+            } catch (Exception ex) {
+                db.event("ERROR", "DailyLog集中救出 index="+index+": "+ex.getMessage());
+            }
+        }
+        db.event("OK", "DailyLog集中救出完了 saved="+saved);
+        return saved;
+    }
 }

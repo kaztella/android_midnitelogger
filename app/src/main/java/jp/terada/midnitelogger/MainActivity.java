@@ -65,6 +65,8 @@ public class MainActivity extends Activity {
     private long chartWindowMs = 24L * 60L * 60L * 1000L;
     private long chartOffsetMs = 0L;
     private boolean chartAutoY = true;
+    private EditText dailyStartDate;
+    private EditText dailyEndDate;
 
     private final Runnable refreshTask = new Runnable() {
         @Override public void run() {
@@ -129,6 +131,17 @@ public class MainActivity extends Activity {
         device = addEdit(root);
         addText(root, "Classic Wi‑Fi SSID");
         classicWifiSsid = addEdit(root);
+        addText(root, "Daily Log救出（通常は5件、集中は日付/期間指定）");
+        LinearLayout dailyRow = new LinearLayout(this);
+        dailyRow.setOrientation(LinearLayout.HORIZONTAL);
+        dailyStartDate = addEdit(dailyRow); dailyStartDate.setHint("開始 yyyy-MM-dd");
+        dailyEndDate = addEdit(dailyRow); dailyEndDate.setHint("終了 yyyy-MM-dd");
+        root.addView(dailyRow);
+        LinearLayout dailyButtons = new LinearLayout(this); root.addView(dailyButtons);
+        addButton(dailyButtons, "通常救出 5件", new View.OnClickListener(){ @Override public void onClick(View v){ runDailyRescue(false); }});
+        addButton(dailyButtons, "指定期間を集中救出", new View.OnClickListener(){ @Override public void onClick(View v){ runDailyRescue(true); }});
+        addButton(dailyButtons, "DailyLog Upload", new View.OnClickListener(){ @Override public void onClick(View v){ uploadDailyLogsNow(); }});
+
         addText(root, "Upload Wi‑Fi SSIDs");
         uploadWifiSsidList = addEdit(root);
         addText(root, "現在の Wi‑Fi");
@@ -725,5 +738,31 @@ public class MainActivity extends Activity {
     @Override protected void onDestroy() {
         handler.removeCallbacks(refreshTask);
         super.onDestroy();
+    }
+
+    private Modbus.L dbLogger() {
+        return new Modbus.L(){ @Override public void log(String level,String message){ db.event(level,message); }};
+    }
+    private void runDailyRescue(final boolean focused) {
+        final String start = dailyStartDate.getText().toString().trim();
+        final String end0 = dailyEndDate.getText().toString().trim();
+        if (focused && start.length()==0) { Toast.makeText(this,"開始日を入力してください",Toast.LENGTH_LONG).show(); return; }
+        final String end = end0.length()==0 ? start : end0;
+        new Thread(new Runnable(){ @Override public void run(){
+            try {
+                DailyLogRescue rescue=new DailyLogRescue(MainActivity.this,db,dbLogger());
+                int n=focused ? rescue.rescueDateRange(start,end) : rescue.runBatch();
+                db.event("OK",(focused?"集中救出 ":"通常救出 ")+n+"件");
+            } catch(Exception ex){ db.event("ERROR","DailyLog救出: "+ex.getMessage()); }
+            handler.post(new Runnable(){ @Override public void run(){ refresh(); }});
+        }},"DailyLogRescueUI").start();
+    }
+    private void uploadDailyLogsNow() {
+        saveSettings();
+        new Thread(new Runnable(){ @Override public void run(){
+            try { int n=new SupabaseUploader(MainActivity.this,db).uploadDailyLogs(); db.event("OK","DailyLog Supabase送信 "+n+"件"); }
+            catch(Exception ex){ db.event("ERROR","DailyLog Upload: "+ex.getMessage()); }
+            handler.post(new Runnable(){ @Override public void run(){ refresh(); }});
+        }}).start();
     }
 }
