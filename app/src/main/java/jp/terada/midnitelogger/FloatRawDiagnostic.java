@@ -13,12 +13,14 @@ public final class FloatRawDiagnostic {
         logger.log("INFO","Float RAW診断開始 index="+startIndex+".."+endIndex);
         int firstRequest=(startIndex/32)*32,lastRequest=(endIndex/32)*32;
         for(int request=firstRequest;request<=lastRequest;request+=32){
+            int[] c1=modbus.readDailyLogBlock(ip,port,unitId,1,request);
             int[] c2=modbus.readDailyLogBlock(ip,port,unitId,2,request);
             int[] c3=modbus.readDailyLogBlock(ip,port,unitId,3,request);
+            int[] c5=modbus.readDailyLogBlock(ip,port,unitId,5,request);
             for(int pos=0;pos<32;pos++){
                 int index=request+(31-pos);
                 if(index<startIndex||index>endIndex)continue;
-                logger.log("INFO","FloatRAW request="+request+" pos="+pos+" index="+index+" cat2="+c2[pos]+" cat3="+c3[pos]+" date="+decodeDate(c3[pos]));
+                logger.log("INFO","FloatRAW request="+request+" pos="+pos+" index="+index+" ah_cat1="+c1[pos]+" float_cat2="+c2[pos]+" date_cat3="+c3[pos]+" fet_raw_cat5="+c5[pos]+" fet_c="+(((short)c5[pos])/10.0)+" date="+decodeDate(c3[pos]));
             }
         }
         logger.log("OK","Float RAW診断完了");
