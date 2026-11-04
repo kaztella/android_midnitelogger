@@ -65,11 +65,6 @@ public class MainActivity extends Activity {
     private long chartWindowMs = 24L * 60L * 60L * 1000L;
     private long chartOffsetMs = 0L;
     private boolean chartAutoY = true;
-    private EditText rawDiagStartIndex;
-    private EditText rawDiagEndIndex;
-    private TextView rawDiagResult;
-    private Button rawDiagButton;
-    private volatile boolean rawDiagRunning;
 
     private final Runnable refreshTask = new Runnable() {
         @Override public void run() {
@@ -139,29 +134,7 @@ public class MainActivity extends Activity {
         addText(root, "現在の Wi‑Fi");
         wifiStatus = addText(root, "未確認");
 
-        addText(root, "Ah / Float / FET RAW診断（読取り専用）");
-        LinearLayout rawDiagRangeRow = new LinearLayout(this);
-        rawDiagRangeRow.setOrientation(LinearLayout.HORIZONTAL);
-        rawDiagStartIndex = addEdit(rawDiagRangeRow);
-        rawDiagStartIndex.setHint("開始Index");
-        rawDiagStartIndex.setText("331");
-        rawDiagEndIndex = addEdit(rawDiagRangeRow);
-        rawDiagEndIndex.setHint("終了Index");
-        rawDiagEndIndex.setText("336");
-        root.addView(rawDiagRangeRow);
 
-        LinearLayout rawDiagButtonRow = new LinearLayout(this);
-        rawDiagButtonRow.setOrientation(LinearLayout.HORIZONTAL);
-        rawDiagButton = addButton(rawDiagButtonRow, "RAW診断開始", new View.OnClickListener() {
-            @Override public void onClick(View view) { startRawDiagnostic(); }
-        });
-        addButton(rawDiagButtonRow, "結果クリア", new View.OnClickListener() {
-            @Override public void onClick(View view) { rawDiagResult.setText("未実行"); }
-        });
-        root.addView(rawDiagButtonRow);
-        rawDiagResult = addText(root, "未実行");
-        rawDiagResult.setTextSize(13);
-        rawDiagResult.setTextIsSelectable(true);
 
         SharedPreferences prefs = getSharedPreferences(Config.PREFS, 0);
         url.setText(prefs.getString("supabase_rpc_url", Config.DEFAULT_SUPABASE_RPC_URL));
@@ -583,88 +556,6 @@ public class MainActivity extends Activity {
                 db.errorCount(), db.freeBytes() / 1073741824.0));
         updateWifiStatus();
         updateGraph();
-    }
-
-    private void startRawDiagnostic() {
-        if (rawDiagRunning) {
-            Toast.makeText(this, "RAW診断を実行中です", Toast.LENGTH_SHORT).show();
-            return;
-        }
-        final int startIndex;
-        final int endIndex;
-        try {
-            startIndex = Integer.parseInt(rawDiagStartIndex.getText().toString().trim());
-            endIndex = Integer.parseInt(rawDiagEndIndex.getText().toString().trim());
-        } catch (NumberFormatException ex) {
-            Toast.makeText(this, "Indexは整数で入力してください", Toast.LENGTH_LONG).show();
-            return;
-        }
-        if (startIndex < 1 || endIndex > 1023 || startIndex > endIndex) {
-            Toast.makeText(this, "1～1023で 開始Index <= 終了Index にしてください", Toast.LENGTH_LONG).show();
-            return;
-        }
-        if (endIndex - startIndex + 1 > 64) {
-            Toast.makeText(this, "診断範囲は最大64件です", Toast.LENGTH_LONG).show();
-            return;
-        }
-
-        rawDiagRunning = true;
-        rawDiagButton.setEnabled(false);
-        rawDiagResult.setText("診断準備中: Index " + startIndex + " ～ " + endIndex
-                + "\n通常ロギングを停止し、Classic Wi-Fiへ接続してください。\n");
-
-        new Thread(new Runnable() {
-            @Override public void run() {
-                final StringBuilder result = new StringBuilder();
-                try {
-                    Thread.sleep(3000L);
-                    FloatRawDiagnostic.run(Config.CLASSIC_IP, Config.MODBUS_PORT,
-                            Config.UNIT_ID, startIndex, endIndex, new Modbus.L() {
-                                @Override public void log(String level, String message) {
-                                    db.event(level, message);
-                                    if (message.startsWith("FloatRAW")) {
-                                        appendRawResult(result, message);
-                                    } else if ("ERROR".equals(level)) {
-                                        result.append("ERROR: ").append(message).append('\n');
-                                    }
-                                }
-                            });
-                    if (result.length() == 0) result.append("対象データなし\n");
-                } catch (Exception ex) {
-                    result.append("診断エラー: ").append(ex.getClass().getSimpleName())
-                            .append(": ").append(ex.getMessage()).append('\n');
-                    db.event("ERROR", "RAW診断: " + ex.getMessage());
-                }
-                handler.post(new Runnable() {
-                    @Override public void run() {
-                        rawDiagRunning = false;
-                        rawDiagButton.setEnabled(true);
-                        rawDiagResult.setText(result.toString());
-                        events.setText(formatEventLog(db.recentEvents(50)));
-                    }
-                });
-            }
-        }, "AhFloatFetRawDiagnostic").start();
-    }
-
-    private static void appendRawResult(StringBuilder out, String message) {
-        String[] parts = message.split(" ");
-        String index="?", date="?", ah="?", floatSec="?", fetC="?", pos="?";
-        for (String part : parts) {
-            if (part.startsWith("index=")) index=part.substring(6);
-            else if (part.startsWith("date=")) date=part.substring(5);
-            else if (part.startsWith("ah_cat1=")) ah=part.substring(8);
-            else if (part.startsWith("float_cat2=")) floatSec=part.substring(11);
-            else if (part.startsWith("fet_c=")) fetC=part.substring(6);
-            else if (part.startsWith("pos=")) pos=part.substring(4);
-        }
-        String floatHours="?";
-        try { floatHours=String.format(Locale.US,"%.3f",Double.parseDouble(floatSec)/3600.0); }
-        catch (Exception ignored) {}
-        out.append(date).append("  Index ").append(index).append("  pos ").append(pos).append('\n')
-                .append("  Ah=").append(ah)
-                .append("  Float=").append(floatSec).append("秒 (").append(floatHours).append("h)")
-                .append("  FET=").append(fetC).append("℃\n\n");
     }
 
     private void updateWifiStatus() {
