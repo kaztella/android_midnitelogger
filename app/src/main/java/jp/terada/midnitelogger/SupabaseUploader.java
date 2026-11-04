@@ -124,7 +124,7 @@ public class SupabaseUploader {
         for(DailyLogRecord r:rows){
             JSONObject j=new JSONObject(); j.put("device_id",deviceId); j.put("log_date",r.logDate);
             j.put("logged_at",r.logDate+"T"+r.logTime+":00+09:00"); j.put("day_index",r.dayIndex);
-            j.put("energy_kwh",r.energyKwh); j.put("amp_hours",r.ampHours); j.put("float_seconds",r.floatSeconds);
+            j.put("energy_kwh",r.energyKwh); j.put("category1_raw",r.category1Raw); j.put("float_seconds",r.floatSeconds);
             j.put("high_power_w",r.highPowerW); j.put("high_fet_temp",r.highFetTemp); j.put("high_pv_v",r.highPvV); j.put("high_battery_v",r.highBatteryV);
             j.put("collected_at",r.collectedAt.replace(' ','T')+"+09:00"); records.put(j);
         }

@@ -35,7 +35,7 @@ public class LoggerService extends Service {
         acquireLocks();
         getSharedPreferences(Config.PREFS, 0).edit().putBoolean("running", true).apply();
         db.event("INFO", "Service開始");
-        db.event("INFO", "BUILD=NORMAL-BASE-20261104");
+        db.event("INFO", "BUILD=CATEGORY1-RAW-V1-20261104");
         executor = Executors.newSingleThreadScheduledExecutor();
         executor.scheduleWithFixedDelay(new Runnable() {
             @Override public void run() { cycle(); }

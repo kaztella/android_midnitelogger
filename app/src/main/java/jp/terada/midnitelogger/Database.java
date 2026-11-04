@@ -21,7 +21,7 @@ import java.util.Locale;
 
 public class Database extends SQLiteOpenHelper {
     public static final String NAME = "midnite.db";
-    private static final int VER = 4;
+    private static final int VER = 5;
     private final Context ctx;
 
     public Database(Context c) {
@@ -34,7 +34,7 @@ public class Database extends SQLiteOpenHelper {
         d.execSQL("CREATE TABLE event(id INTEGER PRIMARY KEY AUTOINCREMENT,ts TEXT NOT NULL,level TEXT NOT NULL,message TEXT NOT NULL)");
         d.execSQL("CREATE INDEX idx_log_uploaded ON log(uploaded,id)");
         d.execSQL("CREATE INDEX idx_event_ts ON event(ts)");
-        d.execSQL("CREATE TABLE daily_log(id INTEGER PRIMARY KEY AUTOINCREMENT,log_date TEXT NOT NULL UNIQUE,log_time TEXT NOT NULL,day_index INTEGER NOT NULL,energy_kwh REAL,amp_hours INTEGER,float_seconds INTEGER,high_power_w INTEGER,high_fet_temp REAL,high_pv_v REAL,high_battery_v REAL,collected_at TEXT NOT NULL,uploaded INTEGER DEFAULT 0)");
+        d.execSQL("CREATE TABLE daily_log(id INTEGER PRIMARY KEY AUTOINCREMENT,log_date TEXT NOT NULL UNIQUE,log_time TEXT NOT NULL,day_index INTEGER NOT NULL,energy_kwh REAL,category1_raw INTEGER,float_seconds INTEGER,high_power_w INTEGER,high_fet_temp REAL,high_pv_v REAL,high_battery_v REAL,collected_at TEXT NOT NULL,uploaded INTEGER DEFAULT 0)");
         d.execSQL("CREATE INDEX idx_daily_log_uploaded ON daily_log(uploaded,id)");
     }
 
@@ -47,6 +47,14 @@ public class Database extends SQLiteOpenHelper {
         }
         if (a < 4) {
             d.execSQL("CREATE TABLE IF NOT EXISTS daily_log(id INTEGER PRIMARY KEY AUTOINCREMENT,log_date TEXT NOT NULL UNIQUE,log_time TEXT NOT NULL,day_index INTEGER NOT NULL,energy_kwh REAL,amp_hours INTEGER,float_seconds INTEGER,high_power_w INTEGER,high_fet_temp REAL,high_pv_v REAL,high_battery_v REAL,collected_at TEXT NOT NULL,uploaded INTEGER DEFAULT 0)");
+            d.execSQL("CREATE INDEX IF NOT EXISTS idx_daily_log_uploaded ON daily_log(uploaded,id)");
+        }
+        if (a < 5) {
+            // Android 4.2.2 compatible migration: rebuild table instead of RENAME COLUMN.
+            d.execSQL("CREATE TABLE daily_log_v5(id INTEGER PRIMARY KEY AUTOINCREMENT,log_date TEXT NOT NULL UNIQUE,log_time TEXT NOT NULL,day_index INTEGER NOT NULL,energy_kwh REAL,category1_raw INTEGER,float_seconds INTEGER,high_power_w INTEGER,high_fet_temp REAL,high_pv_v REAL,high_battery_v REAL,collected_at TEXT NOT NULL,uploaded INTEGER DEFAULT 0)");
+            d.execSQL("INSERT INTO daily_log_v5(id,log_date,log_time,day_index,energy_kwh,category1_raw,float_seconds,high_power_w,high_fet_temp,high_pv_v,high_battery_v,collected_at,uploaded) SELECT id,log_date,log_time,day_index,energy_kwh,amp_hours,float_seconds,high_power_w,high_fet_temp,high_pv_v,high_battery_v,collected_at,uploaded FROM daily_log");
+            d.execSQL("DROP TABLE daily_log");
+            d.execSQL("ALTER TABLE daily_log_v5 RENAME TO daily_log");
             d.execSQL("CREATE INDEX IF NOT EXISTS idx_daily_log_uploaded ON daily_log(uploaded,id)");
         }
     }
@@ -78,7 +86,7 @@ public class Database extends SQLiteOpenHelper {
     public long insertDailyLog(DailyLogRecord r) {
         ContentValues v = new ContentValues();
         v.put("log_date", r.logDate); v.put("log_time", r.logTime); v.put("day_index", r.dayIndex);
-        v.put("energy_kwh", r.energyKwh); v.put("amp_hours", r.ampHours); v.put("float_seconds", r.floatSeconds);
+        v.put("energy_kwh", r.energyKwh); v.put("category1_raw", r.category1Raw); v.put("float_seconds", r.floatSeconds);
         v.put("high_power_w", r.highPowerW); v.put("high_fet_temp", r.highFetTemp);
         v.put("high_pv_v", r.highPvV); v.put("high_battery_v", r.highBatteryV);
         v.put("collected_at", r.collectedAt); v.put("uploaded", 0);
@@ -97,7 +105,7 @@ public class Database extends SQLiteOpenHelper {
             while (c.moveToNext()) {
                 DailyLogRecord r = new DailyLogRecord();
                 r.id=c.getLong(c.getColumnIndex("id")); r.logDate=c.getString(c.getColumnIndex("log_date")); r.logTime=c.getString(c.getColumnIndex("log_time"));
-                r.dayIndex=c.getInt(c.getColumnIndex("day_index")); r.energyKwh=c.getDouble(c.getColumnIndex("energy_kwh")); r.ampHours=c.getInt(c.getColumnIndex("amp_hours"));
+                r.dayIndex=c.getInt(c.getColumnIndex("day_index")); r.energyKwh=c.getDouble(c.getColumnIndex("energy_kwh")); r.category1Raw=c.getInt(c.getColumnIndex("category1_raw"));
                 r.floatSeconds=c.getInt(c.getColumnIndex("float_seconds")); r.highPowerW=c.getInt(c.getColumnIndex("high_power_w")); r.highFetTemp=c.getDouble(c.getColumnIndex("high_fet_temp"));
                 r.highPvV=c.getDouble(c.getColumnIndex("high_pv_v")); r.highBatteryV=c.getDouble(c.getColumnIndex("high_battery_v")); r.collectedAt=c.getString(c.getColumnIndex("collected_at"));
                 rows.add(r);
@@ -254,7 +262,11 @@ public class Database extends SQLiteOpenHelper {
             Cursor tc=d.rawQuery("SELECT 1 FROM backup.sqlite_master WHERE type='table' AND name='daily_log' LIMIT 1",null);
             boolean hasDaily; try { hasDaily=tc.moveToFirst(); } finally { tc.close(); }
             if(hasDaily){
-                d.execSQL("INSERT OR IGNORE INTO daily_log(log_date,log_time,day_index,energy_kwh,amp_hours,float_seconds,high_power_w,high_fet_temp,high_pv_v,high_battery_v,collected_at,uploaded) SELECT log_date,log_time,day_index,energy_kwh,amp_hours,float_seconds,high_power_w,high_fet_temp,high_pv_v,high_battery_v,collected_at,uploaded FROM backup.daily_log");
+                Cursor cc=d.rawQuery("PRAGMA backup.table_info(daily_log)",null);
+                boolean backupHasCategory1Raw=false;
+                try { while(cc.moveToNext()) if("category1_raw".equals(cc.getString(cc.getColumnIndex("name")))) { backupHasCategory1Raw=true; break; } } finally { cc.close(); }
+                String sourceCat1=backupHasCategory1Raw ? "category1_raw" : "amp_hours";
+                d.execSQL("INSERT OR IGNORE INTO daily_log(log_date,log_time,day_index,energy_kwh,category1_raw,float_seconds,high_power_w,high_fet_temp,high_pv_v,high_battery_v,collected_at,uploaded) SELECT log_date,log_time,day_index,energy_kwh,"+sourceCat1+",float_seconds,high_power_w,high_fet_temp,high_pv_v,high_battery_v,collected_at,uploaded FROM backup.daily_log");
                 merged += d.compileStatement("SELECT changes()").simpleQueryForLong();
             }
             return merged;

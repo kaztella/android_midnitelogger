@@ -6,7 +6,7 @@ public class DailyLogRecord {
     public String logTime;
     public int dayIndex;
     public double energyKwh;
-    public int ampHours;
+    public int category1Raw;
     public int floatSeconds;
     public int highPowerW;
     public double highFetTemp;
