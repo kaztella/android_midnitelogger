@@ -31,6 +31,7 @@ import java.io.IOException;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Calendar;
 import java.util.Comparator;
 import java.util.Date;
 import java.util.List;
@@ -49,7 +50,11 @@ public class MainActivity extends Activity {
     private TextView values;
     private TextView events;
     private TextView storage;
+    private TextView uploadState;
+    private TextView dailyRescueState;
     private TextView wifiStatus;
+    private EditText dailyStartDate;
+    private EditText dailyEndDate;
     private TextView chartRangeLabel;
     private EditText url;
     private EditText key;
@@ -181,6 +186,26 @@ public class MainActivity extends Activity {
             @Override public void onClick(View view) { mergeLatestBackup(); }
         });
         storage = addText(root, "");
+        uploadState = addText(root, "Upload状態を取得中...");
+
+        addText(root, "Daily Log集中救出・Upload");
+        LinearLayout dailyDateRow = new LinearLayout(this);
+        dailyDateRow.setOrientation(LinearLayout.HORIZONTAL);
+        dailyStartDate = addEdit(dailyDateRow);
+        dailyStartDate.setHint("開始日 yyyy-MM-dd");
+        dailyEndDate = addEdit(dailyDateRow);
+        dailyEndDate.setHint("終了日 yyyy-MM-dd");
+        root.addView(dailyDateRow);
+        Calendar defaultEnd = Calendar.getInstance();
+        Calendar defaultStart = (Calendar) defaultEnd.clone();
+        defaultStart.add(Calendar.DAY_OF_MONTH, -30);
+        SimpleDateFormat dailyFormat = new SimpleDateFormat("yyyy-MM-dd", Locale.US);
+        dailyStartDate.setText(dailyFormat.format(defaultStart.getTime()));
+        dailyEndDate.setText(dailyFormat.format(defaultEnd.getTime()));
+        addButton(root, "Daily Log集中救出・Upload", new View.OnClickListener() {
+            @Override public void onClick(View view) { runDailyLogConcentrated(); }
+        });
+        dailyRescueState = addText(root, "Daily Log集中救出: 待機中");
 
         addText(root, "グラフ項目");
         metric = new Spinner(this);
@@ -554,6 +579,11 @@ public class MainActivity extends Activity {
                 "測定 %d件 / DB %.2f MB / ERROR %d件 / 端末空き %.2f GB",
                 db.count(), db.dbBytes() / 1048576.0,
                 db.errorCount(), db.freeBytes() / 1073741824.0));
+        if (uploadState != null) {
+            uploadState.setText(String.format(Locale.US,
+                    "通常ログ: Upload済み %d / 全記録 %d\nDaily Log: Upload済み %d / 全記録 %d",
+                    db.uploadedCount(), db.count(), db.dailyUploadedCount(), db.dailyCount()));
+        }
         updateWifiStatus();
         updateGraph();
     }
@@ -662,6 +692,86 @@ public class MainActivity extends Activity {
         if (chartRangeLabel != null) {
             chartRangeLabel.setText("表示範囲: " + formatRangeDescription(chartWindowMs));
         }
+    }
+
+    private void runDailyLogConcentrated() {
+        final String startText = dailyStartDate.getText().toString().trim();
+        final String endText = dailyEndDate.getText().toString().trim();
+        final SimpleDateFormat fmt = new SimpleDateFormat("yyyy-MM-dd", Locale.US);
+        fmt.setLenient(false);
+        final Date startDate;
+        final Date endDate;
+        try { startDate = fmt.parse(startText); endDate = fmt.parse(endText); }
+        catch (Exception e) { Toast.makeText(this, "日付は yyyy-MM-dd で入力してください", Toast.LENGTH_LONG).show(); return; }
+        if (startDate.after(endDate)) { Toast.makeText(this, "開始日は終了日以前にしてください", Toast.LENGTH_LONG).show(); return; }
+        Calendar tomorrow = Calendar.getInstance();
+        tomorrow.set(Calendar.HOUR_OF_DAY, 0); tomorrow.set(Calendar.MINUTE, 0);
+        tomorrow.set(Calendar.SECOND, 0); tomorrow.set(Calendar.MILLISECOND, 0);
+        tomorrow.add(Calendar.DAY_OF_MONTH, 1);
+        if (!endDate.before(tomorrow.getTime())) { Toast.makeText(this, "未来の日付は指定できません", Toast.LENGTH_LONG).show(); return; }
+        long days = (endDate.getTime() - startDate.getTime()) / (24L * 60L * 60L * 1000L) + 1L;
+        if (days > 400L) { Toast.makeText(this, "集中救出は最大400日までです", Toast.LENGTH_LONG).show(); return; }
+        saveSettings();
+        final boolean wasRunning = getSharedPreferences(Config.PREFS, 0).getBoolean("running", false);
+        if (wasRunning) stopService(new Intent(MainActivity.this, LoggerService.class));
+        dailyRescueState.setText("Daily Log集中救出: 開始準備中");
+        new Thread(new Runnable() {
+            @Override public void run() {
+                int rescued = 0; int uploaded = 0; String finalMessage;
+                final Modbus.L log = new Modbus.L() { @Override public void log(String level, String message) { db.event(level, message); } };
+                WifiNetworkManager wifi = new WifiNetworkManager(MainActivity.this);
+                SharedPreferences prefs = getSharedPreferences(Config.PREFS, 0);
+                String classicSsid = prefs.getString("classic_wifi_ssid", Config.CLASSIC_WIFI_SSID);
+                if (classicSsid == null || classicSsid.trim().length() == 0) classicSsid = Config.CLASSIC_WIFI_SSID;
+                try {
+                    postDailyState("Classic側Wi-Fiへ復帰中...");
+                    if (!wifi.restoreClassicNetwork(classicSsid)) throw new IOException("Classic Wi-Fi/IPへ復帰できません: " + wifi.connectionDiagnostics());
+                    ClassicReader reader = new ClassicReader(log);
+                    for (int dayIndex = 1; dayIndex <= 400; dayIndex++) {
+                        ClassicReader.DailyTimestamp ts;
+                        try { ts = reader.readDailyTimestamp(dayIndex); }
+                        catch (Exception e) { db.event("ERROR", "Daily集中 timestamp index=" + dayIndex + " " + e); break; }
+                        Date d = ts.calendar.getTime();
+                        if (d.after(endDate)) continue;
+                        if (d.before(startDate)) break;
+                        postDailyState("Daily Log救出中: " + ts.date + " index=" + dayIndex);
+                        if (!db.hasDailyLogDate(ts.date)) {
+                            DailyLogRecord row = reader.readDailyLog(dayIndex);
+                            if (db.insertDailyLog(row) >= 0) rescued++;
+                        }
+                    }
+                    List<String> uploadSsids = wifi.parseUploadSsidList(prefs.getString("upload_wifi_ssids", Config.DEFAULT_UPLOAD_WIFI_SSIDS));
+                    String candidate = wifi.findUploadNetworkInScanResults(uploadSsids);
+                    if (wifi.shouldUploadOnCurrentNetwork(uploadSsids)) candidate = wifi.getConnectedSsid();
+                    else if (candidate != null) {
+                        postDailyState("外部Wi-Fiへ切替中: " + candidate);
+                        if (!wifi.connectToSsid(candidate, 30000L)) candidate = null;
+                    }
+                    if (candidate != null) {
+                        postDailyState("Daily Log Supabase Upload中...");
+                        for (int batch = 0; batch < 10; batch++) {
+                            int n = new SupabaseUploader(MainActivity.this, db).uploadDailyLogs();
+                            if (n <= 0) break;
+                            uploaded += n;
+                        }
+                    } else db.event("INFO", "Daily集中: 外部Wi-Fiなし。救出データは未送信で保持");
+                    finalMessage = "完了: 救出 " + rescued + "件 / Upload " + uploaded + "件";
+                } catch (Exception e) {
+                    db.event("ERROR", "Daily Log集中救出失敗: " + e.toString());
+                    finalMessage = "失敗: " + e.getMessage();
+                } finally {
+                    postDailyState("Classic側へ復帰中...");
+                    wifi.restoreClassicNetwork(classicSsid);
+                    if (wasRunning) startService(new Intent(MainActivity.this, LoggerService.class));
+                }
+                final String show = finalMessage;
+                handler.post(new Runnable() { @Override public void run() { dailyRescueState.setText("Daily Log集中救出: " + show); refresh(); } });
+            }
+        }).start();
+    }
+
+    private void postDailyState(final String text) {
+        handler.post(new Runnable() { @Override public void run() { if (dailyRescueState != null) dailyRescueState.setText(text); } });
     }
 
     private void backupDatabase() {

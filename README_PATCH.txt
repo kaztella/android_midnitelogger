@@ -1,20 +1,13 @@
-MidNite Logger Conscrypt TLS patch
+MidNite Logger improvement patch based on the files attached on 2026-11-06.
 
-Replace/add:
-app/src/main/java/jp/terada/midnitelogger/ConscryptTls.java
-app/src/main/java/jp/terada/midnitelogger/SupabaseUploader.java
+Modified:
+- MainActivity.java
+- Database.java
+- ChartView.java
 
-Also edit app/build.gradle and add inside dependencies:
-implementation 'org.conscrypt:conscrypt-android:2.5.2'
+Features:
+1) Daily Log concentrated rescue/upload with start/end dates, max 400 days.
+2) Monitor shows normal uploaded/total and daily uploaded/total.
+3) Chart bug fix: removed SQL LIMIT on first 240 rows; now downsamples evenly over entire selected range. Auto Y adds 5% margin.
 
-This patch intentionally does not modify LoggerService, WifiNetworkManager,
-Modbus, Database, or the logging restoration code.
-
-Expected SHL24 log before POST:
-TLS provider=Conscrypt ... Android API=17
-Supabase HTTPS接続開始 rows=...
-
-On success:
-Supabase batch成功 rows=...
-
-If it still fails, the log will identify Conscrypt as provider and include the exception cause chain.
+The existing DailyLogRecord, DailyLogRescue, ConscryptTls, LoggerService, SupabaseUploader and Wi-Fi recovery logic are not overwritten.

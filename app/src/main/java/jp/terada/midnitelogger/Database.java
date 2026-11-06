@@ -203,6 +203,21 @@ public class Database extends SQLiteOpenHelper {
         try { c.moveToFirst(); return c.getLong(0); } finally { c.close(); }
     }
 
+    public long uploadedCount() {
+        Cursor c = getReadableDatabase().rawQuery("SELECT count(*) FROM log WHERE uploaded=1", null);
+        try { c.moveToFirst(); return c.getLong(0); } finally { c.close(); }
+    }
+
+    public long dailyCount() {
+        Cursor c = getReadableDatabase().rawQuery("SELECT count(*) FROM daily_log", null);
+        try { c.moveToFirst(); return c.getLong(0); } finally { c.close(); }
+    }
+
+    public long dailyUploadedCount() {
+        Cursor c = getReadableDatabase().rawQuery("SELECT count(*) FROM daily_log WHERE uploaded=1", null);
+        try { c.moveToFirst(); return c.getLong(0); } finally { c.close(); }
+    }
+
     public long errorCount() {
         Cursor c = getReadableDatabase().rawQuery("SELECT count(*) FROM event WHERE level='ERROR'", null);
         try { c.moveToFirst(); return c.getLong(0); } finally { c.close(); }
@@ -217,6 +232,7 @@ public class Database extends SQLiteOpenHelper {
     }
 
     public List<float[]> chart(String col, String start, String end, int max) {
+        ArrayList<float[]> all = new ArrayList<float[]>();
         ArrayList<float[]> result = new ArrayList<float[]>();
         String safeColumn = "battery_v";
         if ("battery_v".equals(col) || "pv_v".equals(col) || "classic_a".equals(col) || "pv_a".equals(col)
@@ -225,17 +241,20 @@ public class Database extends SQLiteOpenHelper {
                 || "wb_precise_a".equals(col) || "classic_state".equals(col) || "charge_stage".equals(col)) {
             safeColumn = col;
         }
+        // Read the whole selected period first. SQL LIMIT caused the old graph to
+        // show only the first 240 samples and made the latter half appear missing.
         String sql = "SELECT (strftime('%s', ts) - strftime('%s', ?)) AS x, " + safeColumn + " AS y " +
-                "FROM log WHERE ts >= ? AND ts <= ? AND " + safeColumn + " IS NOT NULL ORDER BY ts LIMIT ?";
-        Cursor c = getReadableDatabase().rawQuery(sql, new String[]{start, start, end, String.valueOf(Math.max(1, max))});
+                "FROM log WHERE ts >= ? AND ts <= ? AND " + safeColumn + " IS NOT NULL ORDER BY ts";
+        Cursor c = getReadableDatabase().rawQuery(sql, new String[]{start, start, end});
         try {
-            while (c.moveToNext()) {
-                float offsetSec = c.getFloat(0);
-                float value = c.getFloat(1);
-                result.add(new float[]{offsetSec, value});
-            }
-        } finally {
-            c.close();
+            while (c.moveToNext()) all.add(new float[]{c.getFloat(0), c.getFloat(1)});
+        } finally { c.close(); }
+        int wanted = Math.max(1, max);
+        if (all.size() <= wanted) return all;
+        if (wanted == 1) { result.add(all.get(all.size() - 1)); return result; }
+        for (int i = 0; i < wanted; i++) {
+            int index = Math.round((all.size() - 1) * (i / (float)(wanted - 1)));
+            result.add(all.get(index));
         }
         return result;
     }

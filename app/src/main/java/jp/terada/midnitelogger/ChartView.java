@@ -63,6 +63,7 @@ public class ChartView extends View {
         float top = 52f;
         float right = getWidth() - 14f;
         float bottom = getHeight() - 62f;
+        if (right <= left + 20f || bottom <= top + 20f) return;
 
         paint.setStyle(Paint.Style.STROKE);
         paint.setColor(Color.LTGRAY);
@@ -90,6 +91,11 @@ public class ChartView extends View {
             if (max == min) {
                 max += 1f;
                 min -= 1f;
+            } else {
+                float padding = (max - min) * 0.05f;
+                if (padding < 0.01f) padding = 0.01f;
+                max += padding;
+                min -= padding;
             }
         } else {
             min = fixedMin;
