@@ -1,0 +1,31 @@
+Replace the current tryClassicRead(String reason) method in LoggerService.java with the following two methods.
+This keeps the existing DailyLogRescue call and Wi-Fi restoration flow untouched.
+
+private boolean tryClassicRead(String reason) {
+    if (tryClassicReadOnce(reason, "WARN")) return true;
+    db.event("WARN", reason + ": 2秒後にModbus再試行 " + wifi.connectionDiagnostics());
+    try { Thread.sleep(2000L); }
+    catch (InterruptedException e) { Thread.currentThread().interrupt(); return false; }
+    return tryClassicReadOnce(reason + " retry=2", "ERROR");
+}
+
+private boolean tryClassicReadOnce(String reason, String failureLevel) {
+    if (!wifi.isNetworkReady()) {
+        db.event("INFO", reason + ": WiFi/IP未確立のためModbus保留 " + wifi.connectionDiagnostics());
+        return false;
+    }
+    try {
+        db.event("INFO", reason + ": Classic Modbus読取り開始");
+        ClassicReader reader = new ClassicReader(new Modbus.L() {
+            @Override public void log(String level, String message) { db.event(level, message); }
+        });
+        Record record = reader.read();
+        db.insert(record);
+        db.event("DATA", "Battery=" + record.batteryV + " PV=" + record.pvV + " Power=" + record.watts);
+        db.purgeEvents();
+        return true;
+    } catch (Exception e) {
+        db.event(failureLevel, reason + ": Classic Modbus失敗: " + e.toString() + " " + wifi.connectionDiagnostics());
+        return false;
+    }
+}
