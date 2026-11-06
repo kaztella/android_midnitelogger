@@ -11,8 +11,10 @@ import java.net.Socket;
 public class Modbus {
     public interface L { void log(String level, String message); }
 
-    private static final long DAILY_REPEAT_WAIT_MS = 200L;
-    private static final long DAILY_CATEGORY_WAIT_MS = 200L;
+    private static final long DAILY_REPEAT_WAIT_MS = 2000L;
+    private static final long DAILY_CATEGORY_WAIT_MS = 3000L;
+    private static final long DAILY_TCP_RETRY_WAIT_MS = 5000L;
+    private static final int DAILY_TCP_MAX_ATTEMPTS = 3;
 
     private final L logger;
     private int tx = 1;
@@ -106,6 +108,23 @@ public class Modbus {
 
     /** Each verification read uses a fresh TCP connection to avoid stale/shifted FC104 responses. */
     private int readDailyCategoryOnce(String host, int port, int unit, int category, int dayIndex) throws IOException {
+        IOException last = null;
+        for (int attempt = 1; attempt <= DAILY_TCP_MAX_ATTEMPTS; attempt++) {
+            try {
+                return readDailyCategoryOnceRaw(host, port, unit, category, dayIndex);
+            } catch (IOException e) {
+                last = e;
+                logger.log(attempt < DAILY_TCP_MAX_ATTEMPTS ? "WARN" : "ERROR",
+                        "FC104通信失敗 dayIndex=" + dayIndex + " category=" + category
+                                + " attempt=" + attempt + "/" + DAILY_TCP_MAX_ATTEMPTS
+                                + " " + e.toString());
+                if (attempt < DAILY_TCP_MAX_ATTEMPTS) sleepChecked(DAILY_TCP_RETRY_WAIT_MS);
+            }
+        }
+        throw last != null ? last : new IOException("FC104 retry failed");
+    }
+
+    private int readDailyCategoryOnceRaw(String host, int port, int unit, int category, int dayIndex) throws IOException {
         if (category < 0 || category > 63) throw new IllegalArgumentException("invalid category=" + category);
         Socket socket = new Socket();
         try {

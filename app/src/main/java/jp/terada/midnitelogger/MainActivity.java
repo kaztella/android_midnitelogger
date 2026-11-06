@@ -730,14 +730,24 @@ public class MainActivity extends Activity {
                     for (int dayIndex = 1; dayIndex <= 400; dayIndex++) {
                         ClassicReader.DailyTimestamp ts;
                         try { ts = reader.readDailyTimestamp(dayIndex); }
-                        catch (Exception e) { db.event("ERROR", "Daily集中 timestamp index=" + dayIndex + " " + e); break; }
+                        catch (Exception e) {
+                            db.event("ERROR", "Daily集中 timestamp index=" + dayIndex + " 3回再試行後も失敗: " + e);
+                            try { Thread.sleep(5000L); } catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); break; }
+                            continue;
+                        }
                         Date d = ts.calendar.getTime();
                         if (d.after(endDate)) continue;
                         if (d.before(startDate)) break;
                         postDailyState("Daily Log救出中: " + ts.date + " index=" + dayIndex);
                         if (!db.hasDailyLogDate(ts.date)) {
-                            DailyLogRecord row = reader.readDailyLog(dayIndex);
-                            if (db.insertDailyLog(row) >= 0) rescued++;
+                            try {
+                                DailyLogRecord row = reader.readDailyLog(dayIndex);
+                                if (db.insertDailyLog(row) >= 0) rescued++;
+                            } catch (Exception dailyError) {
+                                db.event("ERROR", "Daily集中 1日分救出失敗 index=" + dayIndex + " date=" + ts.date + " " + dailyError);
+                                try { Thread.sleep(5000L); } catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); break; }
+                                continue;
+                            }
                         }
                     }
                     List<String> uploadSsids = wifi.parseUploadSsidList(prefs.getString("upload_wifi_ssids", Config.DEFAULT_UPLOAD_WIFI_SSIDS));
@@ -762,6 +772,10 @@ public class MainActivity extends Activity {
                 } finally {
                     postDailyState("Classic側へ復帰中...");
                     wifi.restoreClassicNetwork(classicSsid);
+                    getSharedPreferences(Config.PREFS, 0).edit()
+                            .putLong("daily_rescue_suppress_until_ms", System.currentTimeMillis() + 10L * 60L * 1000L)
+                            .apply();
+                    db.event("INFO", "手動Daily集中後: 自動DailyLogRescueを10分抑止");
                     if (wasRunning) startService(new Intent(MainActivity.this, LoggerService.class));
                 }
                 final String show = finalMessage;

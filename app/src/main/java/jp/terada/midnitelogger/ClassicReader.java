@@ -7,7 +7,8 @@ import java.util.GregorianCalendar;
 import java.util.Locale;
 
 public class ClassicReader {
-    private static final long DAILY_RECORD_WAIT_MS = 500L;
+    private static final long DAILY_RECORD_WAIT_MS = 3000L;
+    private static final long DAILY_DAY_INDEX_WAIT_MS = 5000L;
     private static final int MAX_REASONABLE_HIGH_POWER_W = 10000;
     private static final double MIN_REASONABLE_FET_TEMP_C = -100.0;
     private static final double MAX_REASONABLE_FET_TEMP_C = 200.0;
@@ -35,12 +36,14 @@ public class ClassicReader {
     }
 
     public DailyTimestamp readDailyTimestamp(int dayIndex)throws Exception {
+        sleepChecked(DAILY_DAY_INDEX_WAIT_MS);
         int[]v=modbus.readDailyLogCategories(Config.CLASSIC_IP,Config.MODBUS_PORT,Config.UNIT_ID,dayIndex,new int[]{3,6});
         return decodeTimestamp(v[0],v[1]);
     }
 
     public DailyLogRecord readDailyLog(int dayIndex)throws Exception {
         if(dayIndex<1||dayIndex>1023)throw new IllegalArgumentException("dayIndex must be 1..1023: "+dayIndex);
+        sleepChecked(DAILY_DAY_INDEX_WAIT_MS);
         int[]v=modbus.readDailyLog(Config.CLASSIC_IP,Config.MODBUS_PORT,Config.UNIT_ID,dayIndex);
         DailyTimestamp timestamp=decodeTimestamp(v[3],v[6]);
 
