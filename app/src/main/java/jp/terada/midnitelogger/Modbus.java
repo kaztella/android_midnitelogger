@@ -119,6 +119,29 @@ public class Modbus {
         } finally { try { socket.close(); } catch (IOException ignored) {} }
     }
 
+    /** Diagnostic-only 32-word FC104 reader. Not used by normal logging or Daily Log rescue. */
+    public int[] readDailyLogBlock(String host, int port, int unit, int category, int dayIndex) throws IOException {
+        if (category < 0 || category > 63) throw new IllegalArgumentException("invalid category=" + category);
+        if (dayIndex < 1 || dayIndex > 1023) throw new IllegalArgumentException("invalid dayIndex=" + dayIndex);
+        Socket socket = new Socket();
+        try {
+            socket.connect(new InetSocketAddress(host, port), 5000);
+            socket.setSoTimeout(5000); socket.setTcpNoDelay(true);
+            DataOutputStream out = new DataOutputStream(socket.getOutputStream());
+            DataInputStream in = new DataInputStream(socket.getInputStream());
+            int tid = tx++ & 0xffff, address = ((category & 0x3f) << 10) | (dayIndex & 0x03ff);
+            ByteArrayOutputStream b = new ByteArrayOutputStream(16); DataOutputStream q = new DataOutputStream(b);
+            q.writeShort(tid); q.writeShort(0); q.writeShort(10); q.writeByte(unit); q.writeByte(0x68); q.writeByte(5); q.writeByte(2); q.writeShort(0); q.writeInt(address); q.flush();
+            out.write(b.toByteArray()); out.flush();
+            byte[] header = new byte[7]; in.readFully(header);
+            if (u16(header,0)!=tid || u16(header,2)!=0 || (header[6]&0xff)!=(unit&0xff)) throw new IOException("FC104 block MBAP mismatch");
+            int length=u16(header,4); byte[] pdu=new byte[length-1]; in.readFully(pdu);
+            if (pdu.length!=73) throw new IOException("FC104 block PDU expected=73 actual="+pdu.length);
+            int[] words=new int[32]; for(int i=0;i<32;i++) words[i]=u16le(pdu,9+i*2);
+            return words;
+        } finally { try { socket.close(); } catch(IOException ignored){} }
+    }
+
     private static void sleepChecked(long ms) throws IOException {
         try { Thread.sleep(ms); } catch (InterruptedException e) { Thread.currentThread().interrupt(); throw new IOException("DailyLog wait interrupted", e); }
     }
