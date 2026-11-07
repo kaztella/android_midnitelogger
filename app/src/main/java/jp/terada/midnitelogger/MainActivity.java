@@ -694,95 +694,184 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void runDailyLogConcentrated() {
-        final String startText = dailyStartDate.getText().toString().trim();
-        final String endText = dailyEndDate.getText().toString().trim();
-        final SimpleDateFormat fmt = new SimpleDateFormat("yyyy-MM-dd", Locale.US);
-        fmt.setLenient(false);
-        final Date startDate;
-        final Date endDate;
-        try { startDate = fmt.parse(startText); endDate = fmt.parse(endText); }
-        catch (Exception e) { Toast.makeText(this, "日付は yyyy-MM-dd で入力してください", Toast.LENGTH_LONG).show(); return; }
-        if (startDate.after(endDate)) { Toast.makeText(this, "開始日は終了日以前にしてください", Toast.LENGTH_LONG).show(); return; }
-        Calendar tomorrow = Calendar.getInstance();
-        tomorrow.set(Calendar.HOUR_OF_DAY, 0); tomorrow.set(Calendar.MINUTE, 0);
-        tomorrow.set(Calendar.SECOND, 0); tomorrow.set(Calendar.MILLISECOND, 0);
-        tomorrow.add(Calendar.DAY_OF_MONTH, 1);
-        if (!endDate.before(tomorrow.getTime())) { Toast.makeText(this, "未来の日付は指定できません", Toast.LENGTH_LONG).show(); return; }
-        long days = (endDate.getTime() - startDate.getTime()) / (24L * 60L * 60L * 1000L) + 1L;
-        if (days > 400L) { Toast.makeText(this, "集中救出は最大400日までです", Toast.LENGTH_LONG).show(); return; }
-        saveSettings();
-        final boolean wasRunning = getSharedPreferences(Config.PREFS, 0).getBoolean("running", false);
-        if (wasRunning) stopService(new Intent(MainActivity.this, LoggerService.class));
-        dailyRescueState.setText("Daily Log集中救出: 開始準備中");
-        new Thread(new Runnable() {
-            @Override public void run() {
-                int rescued = 0; int uploaded = 0; String finalMessage;
-                final Modbus.L log = new Modbus.L() { @Override public void log(String level, String message) { db.event(level, message); } };
-                WifiNetworkManager wifi = new WifiNetworkManager(MainActivity.this);
-                SharedPreferences prefs = getSharedPreferences(Config.PREFS, 0);
-                String classicSsid = prefs.getString("classic_wifi_ssid", Config.CLASSIC_WIFI_SSID);
-                if (classicSsid == null || classicSsid.trim().length() == 0) classicSsid = Config.CLASSIC_WIFI_SSID;
-                try {
-                    postDailyState("Classic側Wi-Fiへ復帰中...");
-                    if (!wifi.restoreClassicNetwork(classicSsid)) throw new IOException("Classic Wi-Fi/IPへ復帰できません: " + wifi.connectionDiagnostics());
-                    ClassicReader reader = new ClassicReader(log);
-                    for (int dayIndex = 1; dayIndex <= 400; dayIndex++) {
-                        ClassicReader.DailyTimestamp ts;
-                        try { ts = reader.readDailyTimestamp(dayIndex); }
-                        catch (Exception e) {
-                            db.event("ERROR", "Daily集中 timestamp index=" + dayIndex + " 3回再試行後も失敗: " + e);
-                            try { Thread.sleep(5000L); } catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); break; }
-                            continue;
-                        }
-                        Date d = ts.calendar.getTime();
-                        if (d.after(endDate)) continue;
-                        if (d.before(startDate)) break;
-                        postDailyState("Daily Log救出中: " + ts.date + " index=" + dayIndex);
-                        if (!db.hasDailyLogDate(ts.date)) {
-                            try {
-                                DailyLogRecord row = reader.readDailyLog(dayIndex);
-                                if (db.insertDailyLog(row) >= 0) rescued++;
-                            } catch (Exception dailyError) {
-                                db.event("ERROR", "Daily集中 1日分救出失敗 index=" + dayIndex + " date=" + ts.date + " " + dailyError);
-                                try { Thread.sleep(5000L); } catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); break; }
-                                continue;
-                            }
-                        }
-                    }
-                    List<String> uploadSsids = wifi.parseUploadSsidList(prefs.getString("upload_wifi_ssids", Config.DEFAULT_UPLOAD_WIFI_SSIDS));
-                    String candidate = wifi.findUploadNetworkInScanResults(uploadSsids);
-                    if (wifi.shouldUploadOnCurrentNetwork(uploadSsids)) candidate = wifi.getConnectedSsid();
-                    else if (candidate != null) {
-                        postDailyState("外部Wi-Fiへ切替中: " + candidate);
-                        if (!wifi.connectToSsid(candidate, 30000L)) candidate = null;
-                    }
-                    if (candidate != null) {
-                        postDailyState("Daily Log Supabase Upload中...");
-                        for (int batch = 0; batch < 10; batch++) {
-                            int n = new SupabaseUploader(MainActivity.this, db).uploadDailyLogs();
-                            if (n <= 0) break;
-                            uploaded += n;
-                        }
-                    } else db.event("INFO", "Daily集中: 外部Wi-Fiなし。救出データは未送信で保持");
-                    finalMessage = "完了: 救出 " + rescued + "件 / Upload " + uploaded + "件";
-                } catch (Exception e) {
-                    db.event("ERROR", "Daily Log集中救出失敗: " + e.toString());
-                    finalMessage = "失敗: " + e.getMessage();
-                } finally {
-                    postDailyState("Classic側へ復帰中...");
-                    wifi.restoreClassicNetwork(classicSsid);
-                    getSharedPreferences(Config.PREFS, 0).edit()
-                            .putLong("daily_rescue_suppress_until_ms", System.currentTimeMillis() + 10L * 60L * 1000L)
-                            .apply();
-                    db.event("INFO", "手動Daily集中後: 自動DailyLogRescueを10分抑止");
-                    if (wasRunning) startService(new Intent(MainActivity.this, LoggerService.class));
+private void runDailyLogConcentrated() {
+    final String startText = dailyStartDate.getText().toString().trim();
+    final String endText = dailyEndDate.getText().toString().trim();
+    final SimpleDateFormat fmt = new SimpleDateFormat("yyyy-MM-dd", Locale.US);
+    fmt.setLenient(false);
+    final Date startDate;
+    final Date endDate;
+    try { startDate = fmt.parse(startText); endDate = fmt.parse(endText); }
+    catch (Exception e) { Toast.makeText(this, "日付は yyyy-MM-dd で入力してください", Toast.LENGTH_LONG).show(); return; }
+    if (startDate.after(endDate)) { Toast.makeText(this, "開始日は終了日以前にしてください", Toast.LENGTH_LONG).show(); return; }
+    long days = daysBetween(startDate, endDate) + 1L;
+    if (days < 1L || days > 400L) { Toast.makeText(this, "集中救出は最大400日までです", Toast.LENGTH_LONG).show(); return; }
+
+    saveSettings();
+    final boolean wasRunning = getSharedPreferences(Config.PREFS, 0).getBoolean("running", false);
+    if (wasRunning) stopService(new Intent(MainActivity.this, LoggerService.class));
+    dailyRescueState.setText("Daily Log集中救出: 開始準備中");
+
+    new Thread(new Runnable() {
+        @Override public void run() {
+            int rescued = 0;
+            int uploaded = 0;
+            String finalMessage;
+            final Modbus.L log = new Modbus.L() {
+                @Override public void log(String level, String message) { db.event(level, message); }
+            };
+            WifiNetworkManager wifi = new WifiNetworkManager(MainActivity.this);
+            SharedPreferences prefs = getSharedPreferences(Config.PREFS, 0);
+            String classicSsid = prefs.getString("classic_wifi_ssid", Config.CLASSIC_WIFI_SSID);
+            if (classicSsid == null || classicSsid.trim().length() == 0) classicSsid = Config.CLASSIC_WIFI_SSID;
+
+            try {
+                postDailyState("Classic側Wi-Fiへ復帰中...");
+                if (!wifi.restoreClassicNetwork(classicSsid))
+                    throw new IOException("Classic Wi-Fi/IPへ復帰できません: " + wifi.connectionDiagnostics());
+
+                ClassicReader reader = new ClassicReader(log);
+
+                // Read the newest Daily Log timestamp once. No 32-word oldest scan is used.
+                postDailyState("最新Daily Log日付を確認中...");
+                ClassicReader.DailyTimestamp newest = readTimestampWithRetry(reader, 1, 3);
+                Date newestDate = newest.calendar.getTime();
+                if (startDate.after(newestDate)) {
+                    throw new IOException("開始日が最新Daily Logより新しいです latest=" + newest.date);
                 }
-                final String show = finalMessage;
-                handler.post(new Runnable() { @Override public void run() { dailyRescueState.setText("Daily Log集中救出: " + show); refresh(); } });
+
+                int startIndex = 1 + (int) daysBetween(startDate, newestDate);
+                if (startIndex < 1) startIndex = 1;
+                if (startIndex > 1023) startIndex = 1023;
+                startIndex = alignDailyIndex(reader, startIndex, startDate, 6);
+
+                int endIndex = 1 + (int) daysBetween(endDate, newestDate);
+                if (endIndex < 1) endIndex = 1;
+                if (endIndex > 1023) endIndex = 1023;
+                endIndex = alignDailyIndex(reader, endIndex, endDate, 6);
+
+                // Older date has the larger dayIndex. Rescue from older to newer.
+                int fromIndex = Math.max(startIndex, endIndex);
+                int toIndex = Math.min(startIndex, endIndex);
+                db.event("INFO", "Daily集中 index範囲=" + fromIndex + ".." + toIndex
+                        + " latest=" + newest.date + " start=" + startText + " end=" + endText);
+
+                for (int dayIndex = fromIndex; dayIndex >= toIndex; dayIndex--) {
+                    DailyLogRecord row = null;
+                    Exception last = null;
+                    for (int attempt = 1; attempt <= 3; attempt++) {
+                        try {
+                            postDailyState("Daily Log救出中 index=" + dayIndex + " attempt=" + attempt + "/3");
+                            row = reader.readDailyLog(dayIndex);
+                            Date rowDate = fmt.parse(row.logDate);
+                            if (rowDate.before(startDate) || rowDate.after(endDate)) {
+                                throw new IOException("DailyLog日付不一致 index=" + dayIndex + " date=" + row.logDate);
+                            }
+                            last = null;
+                            break;
+                        } catch (Exception e) {
+                            last = e;
+                            String level = attempt < 3 ? "WARN" : "ERROR";
+                            db.event(level, "Daily集中 1日再取得 index=" + dayIndex
+                                    + " attempt=" + attempt + "/3 " + e.toString());
+                            if (attempt < 3) sleepDaily(attempt == 1 ? 5000L : 10000L);
+                        }
+                    }
+                    if (row == null) {
+                        db.event("ERROR", "Daily集中 未取得 index=" + dayIndex + " after 3 attempts"
+                                + (last == null ? "" : " cause=" + last.toString()));
+                        sleepDaily(3000L);
+                        continue;
+                    }
+                    if (!db.hasDailyLogDate(row.logDate)) {
+                        long id = db.insertDailyLog(row);
+                        if (id >= 0) rescued++;
+                    }
+                    sleepDaily(3000L);
+                }
+
+                List<String> uploadSsids = wifi.parseUploadSsidList(
+                        prefs.getString("upload_wifi_ssids", Config.DEFAULT_UPLOAD_WIFI_SSIDS));
+                String candidate = wifi.findUploadNetworkInScanResults(uploadSsids);
+                if (wifi.shouldUploadOnCurrentNetwork(uploadSsids)) candidate = wifi.getConnectedSsid();
+                else if (candidate != null) {
+                    postDailyState("外部Wi-Fiへ切替中: " + candidate);
+                    if (!wifi.connectToSsid(candidate, 30000L)) candidate = null;
+                }
+                if (candidate != null) {
+                    postDailyState("Daily Log Supabase Upload中...");
+                    for (int batch = 0; batch < 10; batch++) {
+                        int n = new SupabaseUploader(MainActivity.this, db).uploadDailyLogs();
+                        if (n <= 0) break;
+                        uploaded += n;
+                    }
+                } else {
+                    db.event("INFO", "Daily集中: 外部Wi-Fiなし。救出データは未送信で保持");
+                }
+                finalMessage = "完了: 救出 " + rescued + "件 / Upload " + uploaded + "件";
+            } catch (Exception e) {
+                db.event("ERROR", "Daily Log集中救出失敗: " + e.toString());
+                finalMessage = "失敗: " + e.getMessage();
+            } finally {
+                postDailyState("Classic側へ復帰中...");
+                wifi.restoreClassicNetwork(classicSsid);
+                if (wasRunning) startService(new Intent(MainActivity.this, LoggerService.class));
             }
-        }).start();
+
+            final String show = finalMessage;
+            handler.post(new Runnable() {
+                @Override public void run() {
+                    dailyRescueState.setText("Daily Log集中救出: " + show);
+                    refresh();
+                }
+            });
+        }
+    }).start();
+}
+
+private ClassicReader.DailyTimestamp readTimestampWithRetry(ClassicReader reader, int dayIndex, int attempts) throws Exception {
+    Exception last = null;
+    for (int attempt = 1; attempt <= attempts; attempt++) {
+        try { return reader.readDailyTimestamp(dayIndex); }
+        catch (Exception e) {
+            last = e;
+            db.event(attempt < attempts ? "WARN" : "ERROR",
+                    "Daily timestamp再試行 index=" + dayIndex + " attempt=" + attempt + "/" + attempts + " " + e.toString());
+            if (attempt < attempts) sleepDaily(attempt == 1 ? 5000L : 10000L);
+        }
     }
+    throw last;
+}
+
+private int alignDailyIndex(ClassicReader reader, int estimated, Date target, int maxAdjust) throws Exception {
+    int index = estimated;
+    for (int i = 0; i <= maxAdjust; i++) {
+        ClassicReader.DailyTimestamp ts = readTimestampWithRetry(reader, index, 3);
+        long diff = daysBetween(target, ts.calendar.getTime());
+        if (diff == 0L) return index;
+        if (diff > 0L) index += (int)Math.min(diff, 3L);   // timestamp newer than target: go older
+        else index -= (int)Math.min(-diff, 3L);           // timestamp older than target: go newer
+        if (index < 1) index = 1;
+        if (index > 1023) index = 1023;
+    }
+    throw new IOException("DailyLog dayIndex位置合わせ失敗 target=" + new SimpleDateFormat("yyyy-MM-dd", Locale.US).format(target)
+            + " estimated=" + estimated);
+}
+
+private static long daysBetween(Date older, Date newer) {
+    Calendar a = Calendar.getInstance(); a.setTime(older); clearDateTime(a);
+    Calendar b = Calendar.getInstance(); b.setTime(newer); clearDateTime(b);
+    return (b.getTimeInMillis() - a.getTimeInMillis()) / (24L * 60L * 60L * 1000L);
+}
+
+private static void clearDateTime(Calendar c) {
+    c.set(Calendar.HOUR_OF_DAY,0); c.set(Calendar.MINUTE,0); c.set(Calendar.SECOND,0); c.set(Calendar.MILLISECOND,0);
+}
+
+private static void sleepDaily(long ms) throws IOException {
+    try { Thread.sleep(ms); }
+    catch (InterruptedException e) { Thread.currentThread().interrupt(); throw new IOException("Daily集中待機中断", e); }
+}
 
     private void postDailyState(final String text) {
         handler.post(new Runnable() { @Override public void run() { if (dailyRescueState != null) dailyRescueState.setText(text); } });
