@@ -11,11 +11,6 @@ import java.net.Socket;
 public class Modbus {
     public interface L { void log(String level, String message); }
 
-    private static final long DAILY_REPEAT_WAIT_MS = 2000L;
-    private static final long DAILY_CATEGORY_WAIT_MS = 3000L;
-    private static final long DAILY_TCP_RETRY_WAIT_MS = 5000L;
-    private static final int DAILY_TCP_MAX_ATTEMPTS = 3;
-
     private final L logger;
     private int tx = 1;
 
@@ -73,59 +68,23 @@ public class Modbus {
         return values;
     }
 
-    public int[] readDailyLogCategories(String host, int port, int unit, int dayIndex, int[] categories) throws IOException {
-        if (dayIndex < 0 || dayIndex > 1023) throw new IllegalArgumentException("invalid dayIndex=" + dayIndex);
+    /**
+     * Read requested Daily Log categories once each. Classic Daily Log access is slow;
+     * callers are responsible for spacing category/day-index changes.
+     */
+    public int[] readDailyLogCategoriesOnce(String host, int port, int unit, int dayIndex, int[] categories, long categoryWaitMs) throws IOException {
+        if (dayIndex < 1 || dayIndex > 1023) throw new IllegalArgumentException("invalid dayIndex=" + dayIndex);
         int[] values = new int[categories.length];
         for (int i = 0; i < categories.length; i++) {
-            values[i] = readDailyCategoryReliable(host, port, unit, categories[i], dayIndex);
-            if (i + 1 < categories.length) sleepChecked(DAILY_CATEGORY_WAIT_MS);
+            values[i] = readDailyCategoryOnce(host, port, unit, categories[i], dayIndex);
+            if (i + 1 < categories.length && categoryWaitMs > 0L) sleepChecked(categoryWaitMs);
         }
         return values;
     }
 
-    public int[] readDailyLog(String host, int port, int unit, int dayIndex) throws IOException {
-        return readDailyLogCategories(host, port, unit, dayIndex, new int[]{0,1,2,3,4,5,6,7,8});
-    }
-
-    /** Two equal reads are required. If they differ, a third read decides by majority. */
-    public int readDailyCategoryReliable(String host, int port, int unit, int category, int dayIndex) throws IOException {
-        int first = readDailyCategoryOnce(host, port, unit, category, dayIndex);
-        sleepChecked(DAILY_REPEAT_WAIT_MS);
-        int second = readDailyCategoryOnce(host, port, unit, category, dayIndex);
-        if (first == second) return first;
-        sleepChecked(DAILY_REPEAT_WAIT_MS);
-        int third = readDailyCategoryOnce(host, port, unit, category, dayIndex);
-        if (first == third) {
-            logger.log("WARN", "DailyLog再読で一致 dayIndex=" + dayIndex + " category=" + category + " values=" + first + "," + second + "," + third);
-            return first;
-        }
-        if (second == third) {
-            logger.log("WARN", "DailyLog再読で一致 dayIndex=" + dayIndex + " category=" + category + " values=" + first + "," + second + "," + third);
-            return second;
-        }
-        throw new IOException("DailyLog 3回不一致 dayIndex=" + dayIndex + " category=" + category + " values=" + first + "," + second + "," + third);
-    }
-
-    /** Each verification read uses a fresh TCP connection to avoid stale/shifted FC104 responses. */
-    private int readDailyCategoryOnce(String host, int port, int unit, int category, int dayIndex) throws IOException {
-        IOException last = null;
-        for (int attempt = 1; attempt <= DAILY_TCP_MAX_ATTEMPTS; attempt++) {
-            try {
-                return readDailyCategoryOnceRaw(host, port, unit, category, dayIndex);
-            } catch (IOException e) {
-                last = e;
-                logger.log(attempt < DAILY_TCP_MAX_ATTEMPTS ? "WARN" : "ERROR",
-                        "FC104通信失敗 dayIndex=" + dayIndex + " category=" + category
-                                + " attempt=" + attempt + "/" + DAILY_TCP_MAX_ATTEMPTS
-                                + " " + e.toString());
-                if (attempt < DAILY_TCP_MAX_ATTEMPTS) sleepChecked(DAILY_TCP_RETRY_WAIT_MS);
-            }
-        }
-        throw last != null ? last : new IOException("FC104 retry failed");
-    }
-
-    private int readDailyCategoryOnceRaw(String host, int port, int unit, int category, int dayIndex) throws IOException {
+    public int readDailyCategoryOnce(String host, int port, int unit, int category, int dayIndex) throws IOException {
         if (category < 0 || category > 63) throw new IllegalArgumentException("invalid category=" + category);
+        if (dayIndex < 1 || dayIndex > 1023) throw new IllegalArgumentException("invalid dayIndex=" + dayIndex);
         Socket socket = new Socket();
         try {
             socket.connect(new InetSocketAddress(host, port), 5000);
@@ -158,22 +117,6 @@ public class Modbus {
             logger.log("RECV", "FC104 dayIndex=" + dayIndex + " category=" + category + " value=" + value);
             return value;
         } finally { try { socket.close(); } catch (IOException ignored) {} }
-    }
-
-    public int[] readDailyLogBlock(String host, int port, int unit, int category, int dayIndex) throws IOException {
-        Socket socket = new Socket();
-        try {
-            socket.connect(new InetSocketAddress(host,port),5000); socket.setSoTimeout(5000); socket.setTcpNoDelay(true);
-            DataOutputStream out=new DataOutputStream(socket.getOutputStream()); DataInputStream in=new DataInputStream(socket.getInputStream());
-            int tid=tx++&0xffff,address=((category&0x3f)<<10)|(dayIndex&0x03ff);
-            ByteArrayOutputStream b=new ByteArrayOutputStream(16); DataOutputStream q=new DataOutputStream(b);
-            q.writeShort(tid);q.writeShort(0);q.writeShort(10);q.writeByte(unit);q.writeByte(0x68);q.writeByte(5);q.writeByte(2);q.writeShort(0);q.writeInt(address);q.flush();
-            out.write(b.toByteArray());out.flush(); byte[] header=new byte[7];in.readFully(header);
-            if(u16(header,0)!=tid||u16(header,2)!=0||(header[6]&0xff)!=(unit&0xff)) throw new IOException("FC104 block MBAP mismatch");
-            int length=u16(header,4);byte[]pdu=new byte[length-1];in.readFully(pdu);
-            if(pdu.length!=73)throw new IOException("FC104 block PDU expected=73 actual="+pdu.length);
-            int[]words=new int[32];for(int i=0;i<32;i++)words[i]=u16le(pdu,9+i*2);return words;
-        } finally { try { socket.close(); } catch(IOException ignored){} }
     }
 
     private static void sleepChecked(long ms) throws IOException {

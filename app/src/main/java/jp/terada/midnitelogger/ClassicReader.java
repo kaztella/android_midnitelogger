@@ -7,8 +7,8 @@ import java.util.GregorianCalendar;
 import java.util.Locale;
 
 public class ClassicReader {
-    private static final long DAILY_RECORD_WAIT_MS = 3000L;
     private static final long DAILY_DAY_INDEX_WAIT_MS = 5000L;
+    private static final long DAILY_CATEGORY_WAIT_MS = 3000L;
     private static final int MAX_REASONABLE_HIGH_POWER_W = 10000;
     private static final double MIN_REASONABLE_FET_TEMP_C = -100.0;
     private static final double MAX_REASONABLE_FET_TEMP_C = 200.0;
@@ -35,37 +35,39 @@ public class ClassicReader {
         DailyTimestamp(Calendar c,String d,String t){calendar=c;date=d;time=t;}
     }
 
+    /** Read only timestamp categories once, after allowing Classic to settle on the day index. */
     public DailyTimestamp readDailyTimestamp(int dayIndex)throws Exception {
+        if(dayIndex<1||dayIndex>1023)throw new IllegalArgumentException("dayIndex must be 1..1023: "+dayIndex);
         sleepChecked(DAILY_DAY_INDEX_WAIT_MS);
-        int[]v=modbus.readDailyLogCategories(Config.CLASSIC_IP,Config.MODBUS_PORT,Config.UNIT_ID,dayIndex,new int[]{3,6});
-        return decodeTimestamp(v[0],v[1]);
+        int dateRaw=modbus.readDailyCategoryOnce(Config.CLASSIC_IP,Config.MODBUS_PORT,Config.UNIT_ID,3,dayIndex);
+        sleepChecked(DAILY_CATEGORY_WAIT_MS);
+        int timeRaw=modbus.readDailyCategoryOnce(Config.CLASSIC_IP,Config.MODBUS_PORT,Config.UNIT_ID,6,dayIndex);
+        return decodeTimestamp(dateRaw,timeRaw);
     }
 
+    /**
+     * Read one complete Daily Log record using one FC104 request per category.
+     * No per-category majority voting is used. If any value is invalid or any request
+     * fails, the whole attempt fails and the caller retries the day from category 0.
+     */
     public DailyLogRecord readDailyLog(int dayIndex)throws Exception {
         if(dayIndex<1||dayIndex>1023)throw new IllegalArgumentException("dayIndex must be 1..1023: "+dayIndex);
         sleepChecked(DAILY_DAY_INDEX_WAIT_MS);
-        int[]v=modbus.readDailyLog(Config.CLASSIC_IP,Config.MODBUS_PORT,Config.UNIT_ID,dayIndex);
+        int[]v=modbus.readDailyLogCategoriesOnce(Config.CLASSIC_IP,Config.MODBUS_PORT,Config.UNIT_ID,dayIndex,new int[]{0,1,2,3,4,5,6,7,8},DAILY_CATEGORY_WAIT_MS);
         DailyTimestamp timestamp=decodeTimestamp(v[3],v[6]);
 
-        int highPower = v[4];
-        double highFet = s16(v[5]) / 10.0;
-        // Majority voting catches transient corruption. These checks catch repeated but physically impossible values.
-        if (highPower < 0 || highPower > MAX_REASONABLE_HIGH_POWER_W) {
-            highPower = modbus.readDailyCategoryReliable(Config.CLASSIC_IP,Config.MODBUS_PORT,Config.UNIT_ID,4,dayIndex);
-            if (highPower < 0 || highPower > MAX_REASONABLE_HIGH_POWER_W)
-                throw new IOException("DailyLog highPower out of range dayIndex="+dayIndex+" value="+highPower);
-        }
-        if (highFet < MIN_REASONABLE_FET_TEMP_C || highFet > MAX_REASONABLE_FET_TEMP_C) {
-            int raw = modbus.readDailyCategoryReliable(Config.CLASSIC_IP,Config.MODBUS_PORT,Config.UNIT_ID,5,dayIndex);
-            highFet = s16(raw) / 10.0;
-            if (highFet < MIN_REASONABLE_FET_TEMP_C || highFet > MAX_REASONABLE_FET_TEMP_C)
-                throw new IOException("DailyLog highFetTemp out of range dayIndex="+dayIndex+" value="+highFet);
-        }
+        int highPower=v[4];
+        double highFet=s16(v[5])/10.0;
+        if(highPower<0||highPower>MAX_REASONABLE_HIGH_POWER_W)
+            throw new IOException("DailyLog highPower out of range dayIndex="+dayIndex+" value="+highPower);
+        if(highFet<MIN_REASONABLE_FET_TEMP_C||highFet>MAX_REASONABLE_FET_TEMP_C)
+            throw new IOException("DailyLog highFetTemp out of range dayIndex="+dayIndex+" value="+highFet);
+        if(v[7]>2000) throw new IOException("DailyLog highPvV raw out of range dayIndex="+dayIndex+" value="+v[7]);
+        if(v[8]>1000) throw new IOException("DailyLog highBatteryV raw out of range dayIndex="+dayIndex+" value="+v[8]);
 
         DailyLogRecord r=new DailyLogRecord(); r.logDate=timestamp.date; r.logTime=timestamp.time; r.dayIndex=dayIndex;
         r.energyKwh=v[0]/10.0;r.category1Raw=v[1];r.floatSeconds=v[2];r.highPowerW=highPower;r.highFetTemp=highFet;
         r.highPvV=v[7]/10.0;r.highBatteryV=v[8]/10.0;r.collectedAt=Time.now();
-        sleepChecked(DAILY_RECORD_WAIT_MS);
         return r;
     }
 
@@ -75,7 +77,7 @@ public class ClassicReader {
         return new DailyTimestamp(c,format(c,"yyyy-MM-dd"),format(c,"HH:mm"));
     }
     private static void sleepChecked(long ms) throws IOException {
-        try { Thread.sleep(ms); } catch (InterruptedException e) { Thread.currentThread().interrupt(); throw new IOException("DailyLog record wait interrupted",e); }
+        try { Thread.sleep(ms); } catch (InterruptedException e) { Thread.currentThread().interrupt(); throw new IOException("DailyLog wait interrupted",e); }
     }
     private static String format(Calendar c,String pattern){SimpleDateFormat f=new SimpleDateFormat(pattern,Locale.US);f.setTimeZone(c.getTimeZone());return f.format(c.getTime());}
 }
