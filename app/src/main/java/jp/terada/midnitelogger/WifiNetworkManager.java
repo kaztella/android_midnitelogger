@@ -25,26 +25,21 @@ public class WifiNetworkManager {
             if (!hasIp(info)) return null;
             String ssid = normalizeSsid(info.getSSID());
             return isInvalidSsid(ssid) ? null : ssid;
-        } catch (Exception ignored) {
-            return null;
-        }
+        } catch (Exception ignored) { return null; }
     }
 
     public boolean isNetworkReady() {
         try {
             WifiInfo info = getInfo();
             return hasIp(info) && info.getSupplicantState() == SupplicantState.COMPLETED;
-        } catch (Exception ignored) {
-            return false;
-        }
+        } catch (Exception ignored) { return false; }
     }
 
     public boolean waitForNetworkReady(long timeoutMs) {
         long end = System.currentTimeMillis() + Math.max(POLL_MS, timeoutMs);
         while (System.currentTimeMillis() < end) {
             if (isNetworkReady()) return true;
-            try { Thread.sleep(POLL_MS); }
-            catch (InterruptedException e) { Thread.currentThread().interrupt(); return false; }
+            try { Thread.sleep(POLL_MS); } catch (InterruptedException e) { Thread.currentThread().interrupt(); return false; }
         }
         return isNetworkReady();
     }
@@ -53,13 +48,9 @@ public class WifiNetworkManager {
         try {
             WifiInfo info = getInfo();
             if (info == null) return "info=null";
-            return "SSID=" + normalizeSsid(info.getSSID())
-                    + " IP=" + ip(info.getIpAddress())
-                    + " state=" + String.valueOf(info.getSupplicantState())
-                    + " RSSI=" + info.getRssi();
-        } catch (Exception e) {
-            return "diag=" + e.getClass().getSimpleName();
-        }
+            return "SSID=" + normalizeSsid(info.getSSID()) + " IP=" + ip(info.getIpAddress())
+                    + " state=" + String.valueOf(info.getSupplicantState()) + " RSSI=" + info.getRssi();
+        } catch (Exception e) { return "diag=" + e.getClass().getSimpleName(); }
     }
 
     public boolean isConnectedTo(String targetSsid) {
@@ -71,9 +62,7 @@ public class WifiNetworkManager {
     public boolean shouldUploadOnCurrentNetwork(List<String> uploadSsids) {
         String current = getConnectedSsid();
         if (TextUtils.isEmpty(current) || uploadSsids == null) return false;
-        for (String ssid : uploadSsids) {
-            if (!TextUtils.isEmpty(ssid) && current.equalsIgnoreCase(normalizeSsid(ssid))) return true;
-        }
+        for (String ssid : uploadSsids) if (!TextUtils.isEmpty(ssid) && current.equalsIgnoreCase(normalizeSsid(ssid))) return true;
         return false;
     }
 
@@ -86,17 +75,13 @@ public class WifiNetworkManager {
             if (results == null) return null;
             for (ScanResult result : results) {
                 String seen = result == null ? null : normalizeSsid(result.SSID);
-                for (String wanted : uploadSsids) {
-                    if (!TextUtils.isEmpty(seen) && seen.equalsIgnoreCase(normalizeSsid(wanted))) return normalizeSsid(wanted);
-                }
+                for (String wanted : uploadSsids) if (!TextUtils.isEmpty(seen) && seen.equalsIgnoreCase(normalizeSsid(wanted))) return normalizeSsid(wanted);
             }
-        } catch (Exception ignored) { return null; }
+        } catch (Exception ignored) {}
         return null;
     }
 
-    public boolean connectToSsid(String targetSsid) {
-        return connectToSsid(targetSsid, Config.WIFI_SWITCH_TIMEOUT_MS);
-    }
+    public boolean connectToSsid(String targetSsid) { return connectToSsid(targetSsid, Config.WIFI_SWITCH_TIMEOUT_MS); }
 
     public boolean connectToSsid(String targetSsid, long timeoutMs) {
         if (wifiManager == null || TextUtils.isEmpty(targetSsid)) return false;
@@ -108,7 +93,6 @@ public class WifiNetworkManager {
             if (!wifiManager.enableNetwork(networkId, true)) return false;
             wifiManager.reconnect();
         } catch (Exception e) { return false; }
-
         long end = System.currentTimeMillis() + Math.max(POLL_MS, timeoutMs);
         String wanted = normalizeSsid(targetSsid);
         while (System.currentTimeMillis() < end) {
@@ -117,15 +101,13 @@ public class WifiNetworkManager {
                 String current = normalizeSsid(info.getSSID());
                 if (wanted.equalsIgnoreCase(current) || isInvalidSsid(current)) return true;
             }
-            try { Thread.sleep(POLL_MS); }
-            catch (InterruptedException e) { Thread.currentThread().interrupt(); return false; }
+            try { Thread.sleep(POLL_MS); } catch (InterruptedException e) { Thread.currentThread().interrupt(); return false; }
         }
         return false;
     }
 
+    /** Do not tear down a working SHL24 connection merely because Android reports unknown SSID. */
     public boolean restoreClassicNetwork(String classicSsid) {
-        // API 17 may report 0x/<unknown ssid> even though association and DHCP are complete.
-        // Never tear down an already working IP connection just because the SSID string is unavailable.
         if (isNetworkReady()) return true;
         long wait = Math.min(Config.UPLOAD_RESTORE_WAIT_MS, 60000L);
         return connectToSsid(classicSsid, wait);
@@ -134,8 +116,7 @@ public class WifiNetworkManager {
     public List<String> parseUploadSsidList(String csv) {
         List<String> result = new ArrayList<String>();
         if (TextUtils.isEmpty(csv)) return result;
-        String[] values = csv.split(",");
-        for (String value : values) {
+        for (String value : csv.split(",")) {
             String clean = normalizeSsid(value);
             if (!TextUtils.isEmpty(clean)) result.add(clean);
         }
@@ -144,31 +125,25 @@ public class WifiNetworkManager {
 
     private WifiInfo getInfo() { return wifiManager == null ? null : wifiManager.getConnectionInfo(); }
     private boolean hasIp(WifiInfo info) { return info != null && info.getIpAddress() != 0; }
-
     private int findConfiguredNetworkId(String targetSsid) {
         try {
             List<WifiConfiguration> networks = wifiManager.getConfiguredNetworks();
             if (networks == null) return -1;
             String wanted = normalizeSsid(targetSsid);
-            for (WifiConfiguration network : networks) {
-                if (network != null && wanted.equalsIgnoreCase(normalizeSsid(network.SSID))) return network.networkId;
-            }
-        } catch (Exception ignored) { return -1; }
+            for (WifiConfiguration network : networks) if (network != null && wanted.equalsIgnoreCase(normalizeSsid(network.SSID))) return network.networkId;
+        } catch (Exception ignored) {}
         return -1;
     }
-
     private static boolean isInvalidSsid(String ssid) {
         return TextUtils.isEmpty(ssid) || "0x".equalsIgnoreCase(ssid)
                 || "<unknown ssid>".equalsIgnoreCase(ssid) || "unknown ssid".equalsIgnoreCase(ssid);
     }
-
     private static String normalizeSsid(String ssid) {
         if (ssid == null) return null;
         String value = ssid.trim();
         if (value.length() >= 2 && value.startsWith("\"") && value.endsWith("\"")) value = value.substring(1, value.length() - 1);
         return value;
     }
-
     private static String ip(int value) {
         if (value == 0) return "0.0.0.0";
         return (value & 255) + "." + ((value >> 8) & 255) + "." + ((value >> 16) & 255) + "." + ((value >> 24) & 255);
