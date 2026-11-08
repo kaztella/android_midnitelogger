@@ -1,23 +1,11 @@
 package jp.terada.midnitelogger;
 
 import java.text.SimpleDateFormat;
+import java.util.Calendar;
 import java.util.GregorianCalendar;
 import java.util.Locale;
 
-/**
- * DIAGNOSTIC: FC104 32-word Daily Log investigation.
- *
- * This class is part of the normal code line. It does not change the normal
- * 60-second logger or Daily Log rescue algorithm. It performs only two FC104
- * block reads (Category 3 = date and Category 4 = high power) with a 10-second
- * cooling interval and writes the result to the normal event log.
- *
- * If 32-word retrieval is proven reliable, readDailyLogBlock() can be reused
- * directly by the production Daily Log rescue implementation.
- */
 public final class DailyLog32WordDiagnostic {
-    private static final long BETWEEN_BLOCKS_WAIT_MS = 10000L;
-
     private final Database db;
     private final Modbus modbus;
 
@@ -26,102 +14,70 @@ public final class DailyLog32WordDiagnostic {
         this.modbus = new Modbus(logger);
     }
 
-    /**
-     * Run one low-load diagnostic block around the estimated dayIndex.
-     *
-     * The old block reader interpreted the 32 returned words as indices
-     * request + 31 ... request. We intentionally print both word position and
-     * that legacy index mapping; the date words themselves are the authority
-     * for confirming/rejecting that mapping.
-     */
     public void run(int estimatedDayIndex) throws Exception {
-        if (estimatedDayIndex < 1 || estimatedDayIndex > 1023) {
-            throw new IllegalArgumentException("invalid estimatedDayIndex=" + estimatedDayIndex);
-        }
-
         int requestIndex = blockRequestFor(estimatedDayIndex);
-        db.event("INFO", "32WORD診断開始 estimatedIndex=" + estimatedDayIndex
-                + " requestIndex=" + requestIndex);
+        db.event("INFO", "32WORD ALL診断開始 estimatedIndex=" + estimatedDayIndex + " requestIndex=" + requestIndex);
+        DailyLogBlock block = modbus.readDailyLogBlockAll(
+                Config.CLASSIC_IP, Config.MODBUS_PORT, Config.UNIT_ID, requestIndex);
+        validateDateSequence(block);
+        logKnownMapping(block);
+        db.event("OK", "32WORD ALL診断完了 requestIndex=" + requestIndex);
+    }
 
-        int[] dateWords = modbus.readDailyLogBlock(
-                Config.CLASSIC_IP, Config.MODBUS_PORT, Config.UNIT_ID, 3, requestIndex);
-        logDateBlock(requestIndex, dateWords);
+    private void validateDateSequence(DailyLogBlock block) throws Exception {
+        Calendar previous = null;
+        for (int pos = 31; pos >= 0; pos--) {
+            Calendar current = decodeDate(block.dateWords[pos]);
+            if (previous != null) {
+                Calendar expected = (Calendar) previous.clone();
+                expected.add(Calendar.DAY_OF_MONTH, -1);
+                if (!sameDate(expected, current)) {
+                    throw new Exception("32WORD date sequence error pos=" + pos);
+                }
+            }
+            previous = current;
+        }
+    }
 
-        sleep(BETWEEN_BLOCKS_WAIT_MS);
+    private void logKnownMapping(DailyLogBlock b) {
+        SimpleDateFormat f = new SimpleDateFormat("yyyy-MM-dd", Locale.US);
+        for (int pos = 31; pos >= 0; pos--) {
+            try {
+                String date = f.format(decodeDate(b.dateWords[pos]).getTime());
+                int index = b.requestIndex + (31 - pos);
+                int highPower = b.highPowerWords[pos];
+                double highFet = ((short)b.highFetWords[pos]) / 10.0;
+                db.event("INFO", "32W ALL pos=" + pos + " index=" + index + " date=" + date
+                        + " energy=" + (b.energyWords[pos] / 10.0)
+                        + " cat1=" + b.category1Words[pos]
+                        + " float=" + b.floatWords[pos]
+                        + " highPower=" + highPower
+                        + " highFet=" + highFet
+                        + " timeRaw=" + b.timeWords[pos]
+                        + " highPv=" + (b.highPvWords[pos] / 10.0)
+                        + " highBatt=" + (b.highBatteryWords[pos] / 10.0));
+            } catch (Exception e) {
+                db.event("WARN", "32W ALL decode fail pos=" + pos + " " + e);
+            }
+        }
+    }
 
-        int[] powerWords = modbus.readDailyLogBlock(
-                Config.CLASSIC_IP, Config.MODBUS_PORT, Config.UNIT_ID, 4, requestIndex);
-        logPowerBlock(requestIndex, powerWords);
+    private static Calendar decodeDate(int raw) {
+        int y = 2000 + ((raw >>> 9) & 0x3f), m = raw & 0x0f, d = (raw >>> 4) & 0x1f;
+        GregorianCalendar c = new GregorianCalendar();
+        c.setLenient(false); c.clear(); c.set(y, m - 1, d, 0, 0, 0); c.getTime(); return c;
+    }
 
-        db.event("OK", "32WORD診断完了 requestIndex=" + requestIndex);
+    private static boolean sameDate(Calendar a, Calendar b) {
+        return a.get(Calendar.YEAR) == b.get(Calendar.YEAR)
+                && a.get(Calendar.DAY_OF_YEAR) == b.get(Calendar.DAY_OF_YEAR);
     }
 
     private static int blockRequestFor(int dayIndex) {
-        // Legacy mapping: request 352 represented indices 352..383.
-        // Keep the target away from the block edge when possible.
         if (dayIndex <= 32) return 1;
-        int request = ((dayIndex - 1) / 32) * 32;
-        if (request < 1) request = 1;
-        if (request > 992) request = 992;
-        return request;
-    }
-
-    private void logDateBlock(int requestIndex, int[] words) {
-        for (int pos = 0; pos < words.length; pos++) {
-            int legacyIndex = requestIndex + (31 - pos);
-            String decoded = decodeDateOrInvalid(words[pos]);
-            db.event("INFO", "32W CAT3 pos=" + two(pos)
-                    + " legacyIndex=" + legacyIndex
-                    + " raw=" + words[pos]
-                    + " hex=0x" + hex4(words[pos])
-                    + " date=" + decoded);
-        }
-    }
-
-    private void logPowerBlock(int requestIndex, int[] words) {
-        for (int pos = 0; pos < words.length; pos++) {
-            int legacyIndex = requestIndex + (31 - pos);
-            db.event("INFO", "32W CAT4 pos=" + two(pos)
-                    + " legacyIndex=" + legacyIndex
-                    + " raw=" + words[pos]
-                    + " hex=0x" + hex4(words[pos])
-                    + " powerW=" + words[pos]);
-        }
-    }
-
-    private static String decodeDateOrInvalid(int raw) {
-        try {
-            int year = 2000 + ((raw >>> 9) & 0x3f);
-            int month = raw & 0x0f;
-            int day = (raw >>> 4) & 0x1f;
-            GregorianCalendar c = new GregorianCalendar();
-            c.setLenient(false);
-            c.clear();
-            c.set(year, month - 1, day, 0, 0, 0);
-            c.getTime();
-            SimpleDateFormat f = new SimpleDateFormat("yyyy-MM-dd", Locale.US);
-            return f.format(c.getTime());
-        } catch (Exception e) {
-            return "INVALID";
-        }
-    }
-
-    private static String two(int value) {
-        return value < 10 ? "0" + value : Integer.toString(value);
-    }
-
-    private static String hex4(int value) {
-        String s = Integer.toHexString(value & 0xffff).toUpperCase(Locale.US);
-        while (s.length() < 4) s = "0" + s;
-        return s;
-    }
-
-    private static void sleep(long ms) throws Exception {
-        try {
-            Thread.sleep(ms);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new Exception("32WORD診断中断", e);
-        }
+        int r = ((dayIndex - 1) / 32) * 32;
+        if (r < 1) r = 1;
+        if (r > 992) r = 992;
+        return r;
     }
 }
