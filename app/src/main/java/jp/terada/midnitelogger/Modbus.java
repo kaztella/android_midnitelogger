@@ -188,6 +188,98 @@ public class Modbus {
     }
 
     /**
+     * Compatibility API for older diagnostic classes.
+     * Reads consecutive Daily Log words from one category with FC104.
+     * Production Daily Log retrieval uses readDailyLog().
+     */
+    public int[] readDailyLogBlock(
+            String host,
+            int port,
+            int unit,
+            int category,
+            int dayIndex) throws IOException {
+        return readDailyLogBlock(host, port, unit, category, dayIndex, 32);
+    }
+
+    /** Compatibility overload: explicit word count. */
+    public int[] readDailyLogBlock(
+            String host,
+            int port,
+            int unit,
+            int category,
+            int dayIndex,
+            int words) throws IOException {
+        validateDailyDayIndex(dayIndex);
+        if (words < 1 || words > 100) {
+            throw new IllegalArgumentException("words must be 1..100");
+        }
+        Socket socket = openSocket(host, port);
+        try {
+            DataOutputStream out = new DataOutputStream(socket.getOutputStream());
+            DataInputStream in = new DataInputStream(socket.getInputStream());
+            return readDailyLogBlockOnConnection(out, in, unit, category, dayIndex, words);
+        } finally {
+            closeSocket(socket);
+        }
+    }
+
+    /**
+     * Compatibility API for DailyLog32WordDiagnostic.
+     * Keeps one TCP connection while reading the requested category blocks.
+     */
+    public int[][] readDailyLogBlocksSameConnection(
+            String host,
+            int port,
+            int unit,
+            int dayIndex,
+            int[] categories,
+            int words) throws IOException {
+        validateDailyDayIndex(dayIndex);
+        if (categories == null || categories.length == 0) {
+            throw new IllegalArgumentException("categories is empty");
+        }
+        if (words < 1 || words > 100) {
+            throw new IllegalArgumentException("words must be 1..100");
+        }
+        Socket socket = openSocket(host, port);
+        try {
+            DataOutputStream out = new DataOutputStream(socket.getOutputStream());
+            DataInputStream in = new DataInputStream(socket.getInputStream());
+            int[][] result = new int[categories.length][];
+            for (int i = 0; i < categories.length; i++) {
+                result[i] = readDailyLogBlockOnConnection(
+                        out, in, unit, categories[i], dayIndex, words);
+            }
+            return result;
+        } finally {
+            closeSocket(socket);
+        }
+    }
+
+    private int[] readDailyLogBlockOnConnection(
+            DataOutputStream out,
+            DataInputStream in,
+            int unit,
+            int category,
+            int dayIndex,
+            int words) throws IOException {
+        int dataLength = words * 2;
+        byte[] data = readInternalOnConnection(
+                out, in, unit, DAILY_DEVICE, dataLength,
+                dailyAddress(category, dayIndex));
+        if (data.length != dataLength) {
+            throw new IOException("FC104 block expected=" + dataLength + " actual=" + data.length);
+        }
+        int[] values = new int[words];
+        for (int i = 0; i < words; i++) {
+            values[i] = u16le(data, i * 2);
+        }
+        logger.log("RECV", "FC104 BLOCK dayIndex=" + dayIndex
+                + " category=" + category + " words=" + words);
+        return values;
+    }
+
+    /**
      * MidNite FC104 Read Internal parser:
      * function, device, data_length, reserved(16), address(32), data...
      */
