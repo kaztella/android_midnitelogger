@@ -88,6 +88,21 @@ public class Modbus {
         return readDailyLogCategories(host, port, unit, dayIndex, new int[]{0,1,2,3,4,5,6,7,8});
     }
 
+    /*
+     * Compatibility overload used by ClassicReader.
+     * Reads the requested categories once each and waits waitMs between categories.
+     */
+    public int[] readDailyLogCategoriesOnce(String host, int port, int unit, int dayIndex, int[] categories, long waitMs) throws IOException {
+        if (dayIndex < 0 || dayIndex > 1023) throw new IllegalArgumentException("invalid dayIndex=" + dayIndex);
+        if (categories == null || categories.length == 0) throw new IllegalArgumentException("categories is empty");
+        int[] values = new int[categories.length];
+        for (int i = 0; i < categories.length; i++) {
+            values[i] = readDailyCategoryOnce(host, port, unit, categories[i], dayIndex);
+            if (i + 1 < categories.length && waitMs > 0L) sleepChecked(waitMs);
+        }
+        return values;
+    }
+
     public int readDailyCategoryOnce(String host, int port, int unit, int category, int dayIndex) throws IOException {
         if (category < 0 || category > 63) throw new IllegalArgumentException("invalid category=" + category);
         Socket socket = new Socket();
