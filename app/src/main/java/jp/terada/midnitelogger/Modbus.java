@@ -118,216 +118,77 @@ public class Modbus {
     }
 
     /* ============================================================
-     * FC104 single-value compatibility API
+     * FC104 Daily Log file transfer
      * ============================================================ */
 
-    public int readDailyCategoryOnce(
-            String host,
-            int port,
-            int unit,
-            int category,
-            int dayIndex) throws IOException {
-
-        Socket socket = openSocket(host, port);
-        try {
-            DataOutputStream out = new DataOutputStream(socket.getOutputStream());
-            DataInputStream in = new DataInputStream(socket.getInputStream());
-
-            byte[] data = readInternalOnConnection(
-                    out,
-                    in,
-                    unit,
-                    DAILY_DEVICE,
-                    2,
-                    dailyAddress(category, dayIndex));
-
-            if (data.length != 2) {
-                throw new IOException("FC104 single expected 2 bytes actual=" + data.length);
-            }
-
-            int value = u16le(data, 0);
-            logger.log("RECV", "FC104 dayIndex=" + dayIndex
-                    + " category=" + category + " value=" + value);
-            return value;
-        } finally {
-            closeSocket(socket);
-        }
-    }
-
-    /** Five-argument compatibility overload. */
-    public int[] readDailyLogCategoriesOnce(
-            String host,
-            int port,
-            int unit,
-            int dayIndex,
-            int[] categories) throws IOException {
-
-        return readDailyLogCategoriesOnce(
-                host, port, unit, dayIndex, categories, 0L);
-    }
-
     /**
-     * Six-argument compatibility overload used by the current ClassicReader.
-     * waitMs is applied only between categories.
+     * Read one complete Daily Log record (categories 0..8) over ONE TCP session.
+     * Each category is an official FC104 Read Internal request for 2 bytes.
      */
-    public int[] readDailyLogCategoriesOnce(
-            String host,
-            int port,
-            int unit,
-            int dayIndex,
-            int[] categories,
-            long waitMs) throws IOException {
-
-        if (categories == null) {
-            throw new IllegalArgumentException("categories is null");
-        }
-
-        int[] values = new int[categories.length];
-        for (int i = 0; i < categories.length; i++) {
-            values[i] = readDailyCategoryOnce(
-                    host, port, unit, categories[i], dayIndex);
-
-            if (waitMs > 0L && i + 1 < categories.length) {
-                sleepChecked(waitMs);
-            }
-        }
-        return values;
-    }
-
-    /** Compatibility alias retained for older ClassicReader revisions. */
-    public int[] readDailyLogCategories(
-            String host,
-            int port,
-            int unit,
-            int dayIndex,
-            int[] categories) throws IOException {
-
-        return readDailyLogCategoriesOnce(
-                host, port, unit, dayIndex, categories, 0L);
-    }
-
-    /** Compatibility alias. New production code should prefer block transfer. */
-    public int readDailyCategoryReliable(
-            String host,
-            int port,
-            int unit,
-            int category,
-            int dayIndex) throws IOException {
-
-        return readDailyCategoryOnce(host, port, unit, category, dayIndex);
-    }
-
     public int[] readDailyLog(
             String host,
             int port,
             int unit,
             int dayIndex) throws IOException {
 
-        return readDailyLogCategoriesOnce(
-                host,
-                port,
-                unit,
-                dayIndex,
-                new int[]{0,1,2,3,4,5,6,7,8},
-                0L);
+        validateDailyDayIndex(dayIndex);
+        Socket socket = openSocket(host, port);
+        try {
+            DataOutputStream out = new DataOutputStream(socket.getOutputStream());
+            DataInputStream in = new DataInputStream(socket.getInputStream());
+            int[] values = new int[9];
+            for (int category = 0; category <= 8; category++) {
+                values[category] = readDailyWordOnConnection(
+                        out, in, unit, category, dayIndex);
+            }
+            return values;
+        } finally {
+            closeSocket(socket);
+        }
     }
 
-    /* ============================================================
-     * FC104 official block transfer
-     * ============================================================ */
-
-    /**
-     * Read 32 daily-log words for one category using an explicit 64-byte request.
-     */
-    public int[] readDailyLogBlock(
+    /** Read timestamp categories 3 and 6 over ONE TCP session. */
+    public int[] readDailyTimestampWords(
             String host,
             int port,
             int unit,
-            int category,
             int dayIndex) throws IOException {
 
+        validateDailyDayIndex(dayIndex);
         Socket socket = openSocket(host, port);
         try {
             DataOutputStream out = new DataOutputStream(socket.getOutputStream());
             DataInputStream in = new DataInputStream(socket.getInputStream());
-            return readDailyLogBlockOnConnection(
-                    out, in, unit, category, dayIndex, 32);
+            return new int[]{
+                    readDailyWordOnConnection(out, in, unit, 3, dayIndex),
+                    readDailyWordOnConnection(out, in, unit, 6, dayIndex)
+            };
         } finally {
             closeSocket(socket);
         }
     }
 
-    /**
-     * Read several daily-log categories over ONE TCP session.
-     * 32 words = 64 bytes per category.
-     */
-    public int[][] readDailyLogBlocksSameConnection(
-            String host,
-            int port,
-            int unit,
-            int dayIndex,
-            int[] categories,
-            int words) throws IOException {
-
-        if (categories == null || categories.length == 0) {
-            throw new IllegalArgumentException("categories is empty");
-        }
-        if (words < 1 || words > 100) {
-            throw new IllegalArgumentException("words must be 1..100");
-        }
-
-        Socket socket = openSocket(host, port);
-        try {
-            DataOutputStream out = new DataOutputStream(socket.getOutputStream());
-            DataInputStream in = new DataInputStream(socket.getInputStream());
-
-            int[][] result = new int[categories.length][];
-            for (int i = 0; i < categories.length; i++) {
-                result[i] = readDailyLogBlockOnConnection(
-                        out, in, unit, categories[i], dayIndex, words);
-            }
-            return result;
-        } finally {
-            closeSocket(socket);
-        }
-    }
-
-    private int[] readDailyLogBlockOnConnection(
+    private int readDailyWordOnConnection(
             DataOutputStream out,
             DataInputStream in,
             int unit,
             int category,
-            int dayIndex,
-            int words) throws IOException {
-
-        int dataLength = words * 2;
+            int dayIndex) throws IOException {
 
         byte[] data = readInternalOnConnection(
-                out,
-                in,
-                unit,
-                DAILY_DEVICE,
-                dataLength,
+                out, in, unit, DAILY_DEVICE, 2,
                 dailyAddress(category, dayIndex));
-
-        if (data.length != dataLength) {
-            throw new IOException("FC104 block expected=" + dataLength
-                    + " actual=" + data.length);
+        if (data.length != 2) {
+            throw new IOException("FC104 Daily Log expected 2 bytes actual=" + data.length);
         }
-
-        int[] values = new int[words];
-        for (int i = 0; i < words; i++) {
-            values[i] = u16le(data, i * 2);
-        }
-
-        logger.log("RECV", "FC104 BLOCK dayIndex=" + dayIndex
-                + " category=" + category + " words=" + words);
-
-        return values;
+        int value = u16le(data, 0);
+        logger.log("RECV", "FC104 DailyLog dayIndex=" + dayIndex
+                + " category=" + category + " value=" + value);
+        return value;
     }
 
     /**
-     * Official FC104 request/response parser:
+     * MidNite FC104 Read Internal parser:
      * function, device, data_length, reserved(16), address(32), data...
      */
     private byte[] readInternalOnConnection(
@@ -343,10 +204,8 @@ public class Modbus {
         }
 
         int tid = nextTransactionId();
-
         ByteArrayOutputStream buffer = new ByteArrayOutputStream(16);
         DataOutputStream request = new DataOutputStream(buffer);
-
         request.writeShort(tid);
         request.writeShort(0);
         request.writeShort(10);
@@ -361,49 +220,27 @@ public class Modbus {
         logger.log("SEND", "FC=104 device=" + device
                 + " len=" + dataLength
                 + " address=0x" + Integer.toHexString(address));
-
         out.write(buffer.toByteArray());
         out.flush();
 
         byte[] pdu = readPdu(in, tid, unit, "FC104");
-
-        if (pdu.length < 9) {
-            throw new IOException("FC104 short PDU=" + pdu.length);
-        }
-
+        if (pdu.length < 9) throw new IOException("FC104 short PDU=" + pdu.length);
         int function = pdu[0] & 0xff;
         checkModbusException(pdu, function, "FC104");
-
-        if (function != FC_READ_INTERNAL) {
-            throw new IOException("FC104 unexpected function=" + function);
-        }
+        if (function != FC_READ_INTERNAL) throw new IOException("FC104 unexpected function=" + function);
 
         int responseDevice = pdu[1] & 0xff;
         int responseLength = pdu[2] & 0xff;
-
-        if (responseDevice != device) {
-            throw new IOException("FC104 device mismatch expected="
-                    + device + " actual=" + responseDevice);
-        }
-
-        if (responseLength != dataLength) {
-            throw new IOException("FC104 data_length mismatch expected="
-                    + dataLength + " actual=" + responseLength);
-        }
+        if (responseDevice != device) throw new IOException("FC104 device mismatch expected=" + device + " actual=" + responseDevice);
+        if (responseLength != dataLength) throw new IOException("FC104 data_length mismatch expected=" + dataLength + " actual=" + responseLength);
 
         int echoedBe = u32be(pdu, 5);
         int echoedLe = u32le(pdu, 5);
-
         if (echoedBe != address && echoedLe != address) {
-            throw new IOException("FC104 address mismatch expected=" + address
-                    + " be=" + echoedBe + " le=" + echoedLe);
+            throw new IOException("FC104 address mismatch expected=" + address + " be=" + echoedBe + " le=" + echoedLe);
         }
-
         int expectedPduLength = 9 + dataLength;
-        if (pdu.length != expectedPduLength) {
-            throw new IOException("FC104 PDU length mismatch expected="
-                    + expectedPduLength + " actual=" + pdu.length);
-        }
+        if (pdu.length != expectedPduLength) throw new IOException("FC104 PDU length mismatch expected=" + expectedPduLength + " actual=" + pdu.length);
 
         byte[] data = new byte[dataLength];
         System.arraycopy(pdu, 9, data, 0, dataLength);
@@ -478,6 +315,12 @@ public class Modbus {
         return tx++ & 0xffff;
     }
 
+    private static void validateDailyDayIndex(int dayIndex) {
+        if (dayIndex < 1 || dayIndex > 1023) {
+            throw new IllegalArgumentException("dayIndex must be 1..1023: " + dayIndex);
+        }
+    }
+
     private static int dailyAddress(int category, int dayIndex) {
         if (category < 0 || category > 63) {
             throw new IllegalArgumentException("invalid category=" + category);
@@ -499,15 +342,6 @@ public class Modbus {
         }
     }
 
-    /** Required by current ClassicReader six-argument overload. */
-    private static void sleepChecked(long ms) throws IOException {
-        try {
-            Thread.sleep(ms);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new IOException("DailyLog wait interrupted", e);
-        }
-    }
 
     private static int u16be(byte[] data, int offset) {
         return ((data[offset] & 0xff) << 8)

@@ -52,7 +52,7 @@ public class MainActivity extends Activity {
     private static final long DAILY_FAILED_DAY_WAIT_MS = 30000L;
 
     private Database db;
-    private TextView status, values, events, storage, uploadState, dailyRescueState, wifiStatus, chartRangeLabel, diagnosticState;
+    private TextView status, values, events, storage, uploadState, dailyRescueState, wifiStatus, chartRangeLabel;
     private EditText dailyStartDate, dailyEndDate, url, key, device, classicWifiSsid, uploadWifiSsidList, chartMinValue, chartMaxValue;
     private Spinner metric;
     private Button chartAutoToggle;
@@ -65,9 +65,6 @@ public class MainActivity extends Activity {
     private volatile boolean dailyRescueRunning = false;
     private volatile boolean dailyRescueCancelRequested = false;
     private Thread dailyRescueThread;
-    private volatile boolean diagnosticRunning = false;
-    private volatile boolean diagnosticCancelRequested = false;
-    private Thread diagnosticThread;
 
     private final Runnable refreshTask = new Runnable() {
         @Override public void run() { refresh(); handler.postDelayed(this, 5000L); }
@@ -92,7 +89,7 @@ public class MainActivity extends Activity {
         root.addView(actionRow);
         addButton(actionRow, "開始", new View.OnClickListener() {
             @Override public void onClick(View view) {
-                if (dailyRescueRunning || diagnosticRunning) {
+                if (dailyRescueRunning) {
                     Toast.makeText(MainActivity.this, "Daily Log処理中は通常ロギングを開始できません", Toast.LENGTH_SHORT).show();
                     return;
                 }
@@ -107,11 +104,6 @@ public class MainActivity extends Activity {
                     dailyRescueCancelRequested = true;
                     if (dailyRescueThread != null) dailyRescueThread.interrupt();
                     db.event("INFO", "停止要求: Daily Log集中救出を中止");
-                }
-                if (diagnosticRunning) {
-                    diagnosticCancelRequested = true;
-                    if (diagnosticThread != null) diagnosticThread.interrupt();
-                    db.event("INFO", "停止要求: 32word診断を中止");
                 }
                 refresh();
             }
@@ -174,9 +166,6 @@ public class MainActivity extends Activity {
         addButton(root, "Daily Log集中救出・Upload", new View.OnClickListener() { @Override public void onClick(View v) { runDailyLogConcentrated(); } });
         dailyRescueState = addText(root, "Daily Log集中救出: 待機中");
 
-        addText(root, "FC104 32word診断");
-        addButton(root, "32word診断 (Cat3+Cat4 / 同一TCP)", new View.OnClickListener() { @Override public void onClick(View v) { run32WordDiagnostic(); } });
-        diagnosticState = addText(root, "32word診断: 待機中");
 
         addText(root, "グラフ項目");
         metric = new Spinner(this);
@@ -216,26 +205,8 @@ public class MainActivity extends Activity {
         setContentView(scroll); loadChartSettingsForCurrentMetric(); refresh(); handler.postDelayed(refreshTask,3000L);
     }
 
-    private void run32WordDiagnostic() {
-        if (diagnosticRunning || dailyRescueRunning) { Toast.makeText(this,"Daily Log処理は既に実行中です",Toast.LENGTH_SHORT).show(); return; }
-        final boolean wasRunning=getSharedPreferences(Config.PREFS,0).getBoolean("running",false);
-        if(wasRunning) stopService(new Intent(this,LoggerService.class));
-        diagnosticCancelRequested=false; diagnosticRunning=true; diagnosticState.setText("32word診断: 実行中...");
-        diagnosticThread=new Thread(new Runnable(){@Override public void run(){String msg; final Modbus.L log=new Modbus.L(){@Override public void log(String l,String m){db.event(l,m);}};
-            try{
-                if(diagnosticCancelRequested||Thread.currentThread().isInterrupted())throw new InterruptedException("cancelled");
-                // Direct block transfer. NO single-value timestamp access, therefore no len=2 FC104 request.
-                new DailyLog32WordDiagnostic(db,log).run(1);
-                msg="成功: Cat3+Cat4を同一TCPで32word取得";
-            }catch(InterruptedException e){Thread.currentThread().interrupt();db.event("INFO","32WORD診断 ユーザー中止");msg="中止";}
-            catch(Exception e){db.event("ERROR","32WORD診断失敗: "+e);msg="失敗: "+e.getMessage();}
-            finally{diagnosticRunning=false;diagnosticThread=null;if(wasRunning&&!diagnosticCancelRequested)startService(new Intent(MainActivity.this,LoggerService.class));}
-            final String show=msg;handler.post(new Runnable(){@Override public void run(){diagnosticState.setText("32word診断: "+show);refresh();}});
-        }}); diagnosticThread.start();
-    }
-
     private void runDailyLogConcentrated(){
-        if(dailyRescueRunning||diagnosticRunning){Toast.makeText(this,"Daily Log処理は既に実行中です",Toast.LENGTH_SHORT).show();return;}
+        if(dailyRescueRunning){Toast.makeText(this,"Daily Log処理は既に実行中です",Toast.LENGTH_SHORT).show();return;}
         final SimpleDateFormat fmt=new SimpleDateFormat("yyyy-MM-dd",Locale.US);fmt.setLenient(false);
         final Date start,end; try{start=fmt.parse(dailyStartDate.getText().toString().trim());end=fmt.parse(dailyEndDate.getText().toString().trim());}catch(Exception e){Toast.makeText(this,"日付は yyyy-MM-dd で入力してください",Toast.LENGTH_LONG).show();return;}
         if(start.after(end)){Toast.makeText(this,"開始日は終了日以前にしてください",Toast.LENGTH_LONG).show();return;}
@@ -249,6 +220,8 @@ public class MainActivity extends Activity {
                 for(int idx=max;idx>=min;idx--){checkDailyRescueCancelled();sleepDaily(idx==max?DAILY_FIRST_INDEX_WAIT_MS:DAILY_NEXT_INDEX_WAIT_MS);Calendar ex=Calendar.getInstance();ex.setTime(newestDate);ex.add(Calendar.DAY_OF_MONTH,-(idx-1));String expected=fmt.format(ex.getTime());DailyLogRecord row=null;Exception last=null;
                     for(int a=1;a<=3;a++){checkDailyRescueCancelled();try{DailyLogRecord r=reader.readDailyLog(idx);if(!expected.equals(r.logDate))throw new IOException("DailyLog日付不一致 expected="+expected+" actual="+r.logDate);row=r;break;}catch(DailyRescueCancelledException z){throw z;}catch(Exception e){last=e;db.event(a<3?"WARN":"ERROR","Daily集中再取得 date="+expected+" index="+idx+" attempt="+a+"/3 "+e);if(a==1)sleepDaily(DAILY_RETRY_WAIT_1_MS);else if(a==2)sleepDaily(DAILY_RETRY_WAIT_2_MS);}}
                     if(row==null){db.event("ERROR","Daily集中 未取得 date="+expected+" index="+idx+" cause="+last);sleepDaily(DAILY_FAILED_DAY_WAIT_MS);continue;}if(!db.hasDailyLogDate(row.logDate)&&db.insertDailyLog(row)>=0)rescued++;}
+                checkDailyRescueCancelled();
+                uploaded=new SupabaseUploader(MainActivity.this,db).uploadDailyLogs();
                 finalMessage="完了: 救出 "+rescued+"件 / Upload "+uploaded+"件";
             }catch(DailyRescueCancelledException e){db.event("INFO","Daily Log集中救出 ユーザー中止");finalMessage="ユーザー操作により中止";}
             catch(Exception e){db.event("ERROR","Daily Log集中救出失敗: "+e);finalMessage="失敗: "+e.getMessage();}
@@ -273,7 +246,7 @@ public class MainActivity extends Activity {
     private EditText addEdit(LinearLayout p){EditText e=new EditText(this);e.setSingleLine(true);p.addView(e);return e;}
     private Button addButton(LinearLayout p,String t,View.OnClickListener l){Button b=new Button(this);b.setText(t);b.setOnClickListener(l);p.addView(b);return b;}
     private void saveSettings(){getSharedPreferences(Config.PREFS,0).edit().putString("supabase_rpc_url",url.getText().toString().trim()).putString("supabase_key",key.getText().toString().trim()).putString("device_id",device.getText().toString().trim()).putString("classic_wifi_ssid",classicWifiSsid.getText().toString().trim()).putString("upload_wifi_ssids",uploadWifiSsidList.getText().toString().trim()).apply();writePersistedSettingsFile();Toast.makeText(this,"保存しました",Toast.LENGTH_SHORT).show();}
-    private void refresh(){boolean running=getSharedPreferences(Config.PREFS,0).getBoolean("running",false);status.setText(diagnosticRunning?"32word診断中":dailyRescueRunning?"Daily Log集中救出中":running?"ロギング中":"停止中");Record r=db.latest();values.setText(r==null?"データ未取得":String.format(Locale.US,"最終記録 %s\nBattery %.2f V  PV %.2f V\nWB %.2f A  Power %d W\n充電状態 %s",r.ts,r.batteryV,r.pvV,r.wbPreciseA,r.watts,chargeStageText(r.chargeStage)));events.setText(formatEventLog(db.recentEvents(50)));storage.setText(String.format(Locale.US,"測定 %d件 / DB %.2f MB / ERROR %d件 / 端末空き %.2f GB",db.count(),db.dbBytes()/1048576.0,db.errorCount(),db.freeBytes()/1073741824.0));uploadState.setText(String.format(Locale.US,"通常ログ: Upload済み %d / 全記録 %d\nDaily Log: Upload済み %d / 全記録 %d",db.uploadedCount(),db.count(),db.dailyUploadedCount(),db.dailyCount()));updateWifiStatus();updateGraph();}
+    private void refresh(){boolean running=getSharedPreferences(Config.PREFS,0).getBoolean("running",false);status.setText(dailyRescueRunning?"Daily Log集中救出中":running?"ロギング中":"停止中");Record r=db.latest();values.setText(r==null?"データ未取得":String.format(Locale.US,"最終記録 %s\nBattery %.2f V  PV %.2f V\nWB %.2f A  Power %d W\n充電状態 %s",r.ts,r.batteryV,r.pvV,r.wbPreciseA,r.watts,chargeStageText(r.chargeStage)));events.setText(formatEventLog(db.recentEvents(50)));storage.setText(String.format(Locale.US,"測定 %d件 / DB %.2f MB / ERROR %d件 / 端末空き %.2f GB",db.count(),db.dbBytes()/1048576.0,db.errorCount(),db.freeBytes()/1073741824.0));uploadState.setText(String.format(Locale.US,"通常ログ: Upload済み %d / 全記録 %d\nDaily Log: Upload済み %d / 全記録 %d",db.uploadedCount(),db.count(),db.dailyUploadedCount(),db.dailyCount()));updateWifiStatus();updateGraph();}
     private void updateWifiStatus(){WifiNetworkManager w=new WifiNetworkManager(this);String s=w.getConnectedSsid();wifiStatus.setText(w.isNetworkReady()?(s==null?"接続済み（SSID取得不可）\n":""+s+"\n")+w.connectionDiagnostics():"未接続\n"+w.connectionDiagnostics());}
     private String chargeStageText(int c){switch(c){case 0:return"Resting/停止";case 3:return"Absorb（定電圧充電）";case 4:return"Bulk MPPT（最大電力充電）";case 5:return"Float（維持充電）";case 6:return"Float MPPT";case 7:return"Equalize";default:return"コード "+c;}}
     private void updateGraph(){if(metric==null||chart==null)return;int i=metric.getSelectedItemPosition();String col=CHART_COLUMNS[i];long end=System.currentTimeMillis()-chartOffsetMs,start=end-chartWindowMs;SimpleDateFormat f=new SimpleDateFormat("yyyy-MM-dd HH:mm:ss",Locale.US);List<float[]> pts=db.chart(col,f.format(new Date(start)),f.format(new Date(end)),240);Float mn=null,mx=null;if(!chartAutoY){SharedPreferences p=getSharedPreferences(Config.PREFS,0);if(p.contains("graph_fixed_min_"+col))mn=p.getFloat("graph_fixed_min_"+col,0f);if(p.contains("graph_fixed_max_"+col))mx=p.getFloat("graph_fixed_max_"+col,0f);}chart.set(pts,metric.getSelectedItem()+" ["+CHART_UNITS[i]+"]",start,end,mn,mx,chartAutoY);chartRangeLabel.setText("表示範囲: "+formatRangeDescription(chartWindowMs));}
@@ -287,5 +260,5 @@ public class MainActivity extends Activity {
     private void mergeLatestBackup(){File d=getBackupDirectory();File[] fs=d.listFiles();if(fs==null||fs.length==0){Toast.makeText(this,"バックアップなし",Toast.LENGTH_SHORT).show();return;}Arrays.sort(fs,new Comparator<File>(){@Override public int compare(File a,File b){return Long.compare(b.lastModified(),a.lastModified());}});for(File f:fs)if(f.getName().startsWith(Config.DB_BACKUP_PREFIX)&&f.getName().endsWith(".db")){try{Toast.makeText(this,"統合 "+db.mergeBackup(f)+"件",Toast.LENGTH_LONG).show();refresh();}catch(Exception e){Toast.makeText(this,e.toString(),Toast.LENGTH_LONG).show();}return;}}
     private void requestRuntimePermissions(){if(Build.VERSION.SDK_INT<23)return;ArrayList<String>a=new ArrayList<String>();if(checkSelfPermission("android.permission.ACCESS_FINE_LOCATION")!=PackageManager.PERMISSION_GRANTED)a.add("android.permission.ACCESS_FINE_LOCATION");if(Build.VERSION.SDK_INT>=33&&checkSelfPermission("android.permission.NEARBY_WIFI_DEVICES")!=PackageManager.PERMISSION_GRANTED)a.add("android.permission.NEARBY_WIFI_DEVICES");if(!a.isEmpty())requestPermissions(a.toArray(new String[a.size()]),7);}
     private void postDailyState(final String t){handler.post(new Runnable(){@Override public void run(){if(dailyRescueState!=null)dailyRescueState.setText(t);}});}
-    @Override protected void onDestroy(){handler.removeCallbacks(refreshTask);dailyRescueCancelRequested=true;diagnosticCancelRequested=true;if(dailyRescueThread!=null)dailyRescueThread.interrupt();if(diagnosticThread!=null)diagnosticThread.interrupt();super.onDestroy();}
+    @Override protected void onDestroy(){handler.removeCallbacks(refreshTask);dailyRescueCancelRequested=true;if(dailyRescueThread!=null)dailyRescueThread.interrupt();super.onDestroy();}
 }
