@@ -58,26 +58,48 @@ public class Modbus {
         return values;
     }
 
-    public int[] readDailyLog(String host, int port, int unit, int dayIndex) throws IOException {
-        validateDailyDayIndex(dayIndex);
-        Socket socket = openSocket(host, port);
-        try {
-            DataOutputStream out = new DataOutputStream(socket.getOutputStream());
-            DataInputStream in = new DataInputStream(socket.getInputStream());
+    /**
+     * Reusable FC104 Daily Log TCP session.
+     * Concentrated rescue keeps this session open so Classic is not forced to
+     * accept a new TCP connection for every day.
+     */
+    public final class DailySession implements java.io.Closeable {
+        private final Socket socket;
+        private final DataOutputStream out;
+        private final DataInputStream in;
+        private boolean closed;
+
+        private DailySession(String host, int port) throws IOException {
+            socket = openSocket(host, port);
+            out = new DataOutputStream(socket.getOutputStream());
+            in = new DataInputStream(socket.getInputStream());
+        }
+
+        public int[] readDay(int unit, int dayIndex) throws IOException {
+            validateDailyDayIndex(dayIndex);
+            if (closed) throw new IOException("FC104 DailySession already closed");
             int[] values = new int[9];
-            for (int category = 0; category <= 8; category++) values[category] = readDailyWordOnConnection(out, in, unit, category, dayIndex);
+            for (int category = 0; category <= 8; category++) {
+                values[category] = readDailyWordOnConnection(out, in, unit, category, dayIndex);
+            }
             return values;
-        } finally { closeSocket(socket); }
+        }
+
+        @Override public void close() {
+            if (closed) return;
+            closed = true;
+            closeSocket(socket);
+        }
     }
 
-    public int[] readDailyTimestampWords(String host, int port, int unit, int dayIndex) throws IOException {
-        validateDailyDayIndex(dayIndex);
-        Socket socket = openSocket(host, port);
-        try {
-            DataOutputStream out = new DataOutputStream(socket.getOutputStream());
-            DataInputStream in = new DataInputStream(socket.getInputStream());
-            return new int[]{readDailyWordOnConnection(out, in, unit, 3, dayIndex), readDailyWordOnConnection(out, in, unit, 6, dayIndex)};
-        } finally { closeSocket(socket); }
+    public DailySession openDailySession(String host, int port) throws IOException {
+        return new DailySession(host, port);
+    }
+
+    public int[] readDailyLog(String host, int port, int unit, int dayIndex) throws IOException {
+        DailySession session = openDailySession(host, port);
+        try { return session.readDay(unit, dayIndex); }
+        finally { session.close(); }
     }
 
     private int readDailyWordOnConnection(DataOutputStream out, DataInputStream in, int unit, int category, int dayIndex) throws IOException {
