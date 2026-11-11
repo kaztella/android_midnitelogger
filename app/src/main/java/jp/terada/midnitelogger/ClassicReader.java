@@ -48,6 +48,24 @@ public class ClassicReader {
         return new DailySession(modbus.openDailySession(Config.CLASSIC_IP,Config.MODBUS_PORT));
     }
 
+    /**
+     * Compatibility API for legacy helpers such as DailyLogOldestFinder.
+     * Concentrated rescue does not call this method; it keeps one DailySession open.
+     */
+    public DailyTimestamp readDailyTimestamp(int dayIndex) throws Exception {
+        DailyLogRecord row = readDailyLog(dayIndex);
+        GregorianCalendar c = new GregorianCalendar();
+        c.setLenient(false);
+        c.clear();
+        String[] ymd = row.logDate.split("-");
+        String[] hm = row.logTime.split(":");
+        c.set(Integer.parseInt(ymd[0]), Integer.parseInt(ymd[1]) - 1,
+                Integer.parseInt(ymd[2]), Integer.parseInt(hm[0]),
+                Integer.parseInt(hm[1]), 0);
+        c.getTime();
+        return new DailyTimestamp(c, row.logDate, row.logTime);
+    }
+
     /** Stand-alone read retained for callers outside concentrated rescue. */
     public DailyLogRecord readDailyLog(int dayIndex)throws Exception {
         Modbus.DailySession s=modbus.openDailySession(Config.CLASSIC_IP,Config.MODBUS_PORT);
