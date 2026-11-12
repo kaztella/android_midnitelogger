@@ -26,19 +26,24 @@ if(start.after(end)){Toast.makeText(this,"開始日は終了日以前にして�
 if(daysBetween(start,end)+1>400){Toast.makeText(this,"集中救出は最大400日までです",Toast.LENGTH_LONG).show();return;}
 final boolean wasRunning=getSharedPreferences(Config.PREFS,0).getBoolean("running",false);if(wasRunning)stopService(new Intent(this,LoggerService.class));
 dailyRescueCancelRequested=false;dailyRescueRunning=true;dailyRescueState.setText("Daily Log集中救出: 32日ブロック読取り中");
-dailyRescueThread=new Thread(new Runnable(){@Override public void run(){int rescued=0,uploaded=0;String finalMessage;final Modbus.L log=new Modbus.L(){@Override public void log(String l,String m){db.event(l,m);}};ClassicReader.DailySession session=null;
+dailyRescueThread=new Thread(new Runnable(){@Override public void run(){int rescued=0,uploaded=0,failedBlocks=0;String finalMessage;final Modbus.L log=new Modbus.L(){@Override public void log(String l,String m){db.event(l,m);}};ClassicReader.DailySession session=null;
 try{
 ClassicReader reader=new ClassicReader(log);
 final int[] blockIndexes={1,33,65,97,129,161,193,225,257,289,321,353};
 for(int bi=0;bi<blockIndexes.length;bi++){
 checkDailyRescueCancelled();int blockIndex=blockIndexes[bi];ClassicReader.DailyBlock block=null;Exception last=null;
-for(int attempt=1;attempt<=3;attempt++){
+final int maxAttempts=8;
+for(int attempt=1;attempt<=maxAttempts;attempt++){
 try{
 if(session==null)session=reader.openDailySession();
 block=session.readBlock(blockIndex);last=null;break;
-}catch(Exception e){last=e;db.event(attempt<3?"WARN":"ERROR","FC104 BLOCK retry DayIndex="+blockIndex+" attempt="+attempt+"/3 "+e);if(session!=null){session.close();session=null;}if(attempt<3)sleepDaily(attempt==1?2000L:5000L);}
+}catch(Exception e){last=e;db.event(attempt<maxAttempts?"WARN":"ERROR","FC104 BLOCK retry DayIndex="+blockIndex+" attempt="+attempt+"/"+maxAttempts+" "+e);if(session!=null){session.close();session=null;}if(attempt<maxAttempts)sleepDaily(1000L);}
 }
-if(block==null)throw new IOException("FC104 block取得失敗 DayIndex="+blockIndex,last);
+if(block==null){
+    failedBlocks++;
+    db.event("ERROR","FC104 BLOCK取得断念 DayIndex="+blockIndex+" 既取得データを保持して次ブロックへ進みます cause="+last);
+    continue;
+}
 int accepted=0;
 for(int word=0;word<32;word++){
 DailyLogRecord row;
@@ -51,8 +56,8 @@ db.event("INFO","Daily BLOCK完了 DayIndex="+blockIndex+" accepted="+accepted+"
 }
 if(session!=null){session.close();session=null;}
 checkDailyRescueCancelled();
-try{uploaded=new SupabaseUploader(MainActivity.this,db).uploadDailyLogs();finalMessage="完了: 救出 "+rescued+"件 / Upload "+uploaded+"件";}
-catch(IOException uploadError){db.event("WARN","Daily Log救出成功 / Upload未完了: "+uploadError.getMessage());finalMessage="救出 "+rescued+"件成功 / Upload未完了: "+uploadError.getMessage();}
+try{uploaded=new SupabaseUploader(MainActivity.this,db).uploadDailyLogs();finalMessage=(failedBlocks==0?"完了":"部分完了")+": 救出 "+rescued+"件 / 失敗Block "+failedBlocks+" / Upload "+uploaded+"件";}
+catch(IOException uploadError){db.event("WARN","Daily Log救出済み / Upload未完了: "+uploadError.getMessage());finalMessage=(failedBlocks==0?"救出完了":"部分救出")+": "+rescued+"件 / 失敗Block "+failedBlocks+" / Upload未完了: "+uploadError.getMessage();}
 }catch(DailyRescueCancelledException e){db.event("INFO","Daily Log集中救出 ユーザー中止");finalMessage="ユーザー操作により中止";}
 catch(Exception e){db.event("ERROR","Daily Log集中救出失敗: "+e);finalMessage="失敗: "+e.getMessage();}
 finally{if(session!=null)session.close();dailyRescueRunning=false;dailyRescueThread=null;if(wasRunning&&!dailyRescueCancelRequested)startService(new Intent(MainActivity.this,LoggerService.class));}
