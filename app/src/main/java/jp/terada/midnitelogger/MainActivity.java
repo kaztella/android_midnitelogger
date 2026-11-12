@@ -25,24 +25,29 @@ final Date start,end;try{start=fmt.parse(dailyStartDate.getText().toString().tri
 if(start.after(end)){Toast.makeText(this,"開始日は終了日以前にしてください",Toast.LENGTH_LONG).show();return;}
 if(daysBetween(start,end)+1>400){Toast.makeText(this,"集中救出は最大400日までです",Toast.LENGTH_LONG).show();return;}
 final boolean wasRunning=getSharedPreferences(Config.PREFS,0).getBoolean("running",false);if(wasRunning)stopService(new Intent(this,LoggerService.class));
-dailyRescueCancelRequested=false;dailyRescueRunning=true;dailyRescueState.setText("Daily Log集中救出: 開始準備中");
+dailyRescueCancelRequested=false;dailyRescueRunning=true;dailyRescueState.setText("Daily Log集中救出: 32日ブロック読取り中");
 dailyRescueThread=new Thread(new Runnable(){@Override public void run(){int rescued=0,uploaded=0;String finalMessage;final Modbus.L log=new Modbus.L(){@Override public void log(String l,String m){db.event(l,m);}};ClassicReader.DailySession session=null;
 try{
 ClassicReader reader=new ClassicReader(log);
-session=reader.openDailySession();
-// IMPORTANT: do not pre-read Cat3/Cat6 on a separate TCP connection.
-// Read the complete index 1 (Cat0..8) first and keep the same TCP session open.
-DailyLogRecord newest=session.readDailyLog(1);Date newestDate=fmt.parse(newest.logDate);
-db.event("INFO","Daily集中 基準日 index=1 date="+newest.logDate+" same-TCP継続");
-int from=1+(int)daysBetween(start,newestDate),to=1+(int)daysBetween(end,newestDate);
-int max=Math.max(from,to),min=Math.max(1,Math.min(from,to));
-// 380/381 are intentionally not classified here. Date consistency remains the safety check.
-for(int idx=max;idx>=min;idx--){
-checkDailyRescueCancelled();Calendar ex=Calendar.getInstance();ex.setTime(newestDate);ex.add(Calendar.DAY_OF_MONTH,-(idx-1));String expected=fmt.format(ex.getTime());
+final int[] blockIndexes={1,33,65,97,129,161,193,225,257,289,321,353};
+for(int bi=0;bi<blockIndexes.length;bi++){
+checkDailyRescueCancelled();int blockIndex=blockIndexes[bi];ClassicReader.DailyBlock block=null;Exception last=null;
+for(int attempt=1;attempt<=3;attempt++){
+try{
+if(session==null)session=reader.openDailySession();
+block=session.readBlock(blockIndex);last=null;break;
+}catch(Exception e){last=e;db.event(attempt<3?"WARN":"ERROR","FC104 BLOCK retry DayIndex="+blockIndex+" attempt="+attempt+"/3 "+e);if(session!=null){session.close();session=null;}if(attempt<3)sleepDaily(attempt==1?2000L:5000L);}
+}
+if(block==null)throw new IOException("FC104 block取得失敗 DayIndex="+blockIndex,last);
+int accepted=0;
+for(int word=0;word<32;word++){
 DailyLogRecord row;
-if(idx==1){row=newest;}else{row=session.readDailyLog(idx);}
-if(!expected.equals(row.logDate)){throw new IOException("DailyLog日付不一致 expected="+expected+" actual="+row.logDate+" index="+idx);}
-if(!db.hasDailyLogDate(row.logDate)&&db.insertDailyLog(row)>=0)rescued++;
+try{row=block.recordAt(word);}catch(IOException bad){db.event("WARN","Daily block skip index="+blockIndex+" word="+word+" "+bad.getMessage());continue;}
+Date actual;try{actual=fmt.parse(row.logDate);}catch(Exception bad){continue;}
+if(actual.before(start)||actual.after(end))continue;
+if(!db.hasDailyLogDate(row.logDate)&&db.insertDailyLog(row)>=0){rescued++;accepted++;}
+}
+db.event("INFO","Daily BLOCK完了 DayIndex="+blockIndex+" accepted="+accepted+" cumulative="+rescued);
 }
 if(session!=null){session.close();session=null;}
 checkDailyRescueCancelled();

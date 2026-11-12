@@ -33,13 +33,32 @@ public class ClassicReader {
         DailyTimestamp(Calendar c,String d,String t){calendar=c;date=d;time=t;}
     }
 
-    /** One TCP session for the whole concentrated rescue. */
+    /** All 9 categories for the same 32 physical log slots. */
+    public static final class DailyBlock {
+        public final int dayIndex;
+        public final int[][] categoryWords;
+        DailyBlock(int dayIndex,int[][] words){this.dayIndex=dayIndex;this.categoryWords=words;}
+        public DailyLogRecord recordAt(int word) throws IOException {
+            if(word<0||word>=32)throw new IllegalArgumentException("word must be 0..31");
+            return buildDailyLogRecord(dayIndex,word,categoryWords);
+        }
+    }
+
     public final class DailySession implements java.io.Closeable {
         private final Modbus.DailySession session;
         private DailySession(Modbus.DailySession session){this.session=session;}
+
+        public DailyBlock readBlock(int dayIndex) throws IOException {
+            int[][] words=new int[9][];
+            for(int category=0;category<=8;category++) {
+                words[category]=session.readDailyCategoryRecord(Config.UNIT_ID,category,dayIndex);
+            }
+            return new DailyBlock(dayIndex,words);
+        }
+
         public DailyLogRecord readDailyLog(int dayIndex) throws Exception {
-            int[] v=session.readDay(Config.UNIT_ID,dayIndex);
-            return buildDailyLogRecord(dayIndex,v);
+            // Compatibility behavior: W31 is the requested logical DayIndex.
+            return readBlock(dayIndex).recordAt(31);
         }
         @Override public void close(){session.close();}
     }
@@ -48,47 +67,45 @@ public class ClassicReader {
         return new DailySession(modbus.openDailySession(Config.CLASSIC_IP,Config.MODBUS_PORT));
     }
 
-    /**
-     * Compatibility API for legacy helpers such as DailyLogOldestFinder.
-     * Concentrated rescue does not call this method; it keeps one DailySession open.
-     */
+    /** Compatibility API for legacy helpers. Not used by concentrated rescue. */
     public DailyTimestamp readDailyTimestamp(int dayIndex) throws Exception {
-        DailyLogRecord row = readDailyLog(dayIndex);
-        GregorianCalendar c = new GregorianCalendar();
-        c.setLenient(false);
-        c.clear();
-        String[] ymd = row.logDate.split("-");
-        String[] hm = row.logTime.split(":");
-        c.set(Integer.parseInt(ymd[0]), Integer.parseInt(ymd[1]) - 1,
-                Integer.parseInt(ymd[2]), Integer.parseInt(hm[0]),
-                Integer.parseInt(hm[1]), 0);
-        c.getTime();
-        return new DailyTimestamp(c, row.logDate, row.logTime);
+        DailyLogRecord row=readDailyLog(dayIndex);
+        return parseTimestamp(row.logDate,row.logTime);
     }
 
-    /** Stand-alone read retained for callers outside concentrated rescue. */
     public DailyLogRecord readDailyLog(int dayIndex)throws Exception {
-        Modbus.DailySession s=modbus.openDailySession(Config.CLASSIC_IP,Config.MODBUS_PORT);
-        try { return buildDailyLogRecord(dayIndex,s.readDay(Config.UNIT_ID,dayIndex)); }
-        finally { s.close(); }
+        DailySession s=openDailySession();
+        try{return s.readDailyLog(dayIndex);}finally{s.close();}
     }
 
-    private DailyLogRecord buildDailyLogRecord(int dayIndex,int[] v)throws IOException {
-        DailyTimestamp timestamp=decodeTimestamp(v[3],v[6]);
-        int highPower=v[4]; double highFet=s16(v[5])/10.0;
-        if(highPower<0||highPower>MAX_REASONABLE_HIGH_POWER_W)throw new IOException("DailyLog highPower out of range dayIndex="+dayIndex+" value="+highPower);
-        if(highFet<MIN_REASONABLE_FET_TEMP_C||highFet>MAX_REASONABLE_FET_TEMP_C)throw new IOException("DailyLog highFetTemp out of range dayIndex="+dayIndex+" value="+highFet);
-        if(v[7]>2000)throw new IOException("DailyLog highPvV raw out of range dayIndex="+dayIndex+" value="+v[7]);
-        if(v[8]>1000)throw new IOException("DailyLog highBatteryV raw out of range dayIndex="+dayIndex+" value="+v[8]);
-        DailyLogRecord r=new DailyLogRecord(); r.logDate=timestamp.date;r.logTime=timestamp.time;r.dayIndex=dayIndex;
-        r.energyKwh=v[0]/10.0;r.category1Raw=v[1];r.floatSeconds=v[2];r.highPowerW=highPower;r.highFetTemp=highFet;
-        r.highPvV=v[7]/10.0;r.highBatteryV=v[8]/10.0;r.collectedAt=Time.now();return r;
+    private static DailyLogRecord buildDailyLogRecord(int requestedDayIndex,int word,int[][] v)throws IOException {
+        DailyTimestamp timestamp=decodeTimestamp(v[3][word],v[6][word]);
+        int highPower=v[4][word]; double highFet=s16(v[5][word])/10.0;
+        if(highPower<0||highPower>MAX_REASONABLE_HIGH_POWER_W)throw new IOException("DailyLog highPower out of range block="+requestedDayIndex+" word="+word+" value="+highPower);
+        if(highFet<MIN_REASONABLE_FET_TEMP_C||highFet>MAX_REASONABLE_FET_TEMP_C)throw new IOException("DailyLog highFetTemp out of range block="+requestedDayIndex+" word="+word+" value="+highFet);
+        if(v[7][word]>2000)throw new IOException("DailyLog highPvV raw out of range block="+requestedDayIndex+" word="+word+" value="+v[7][word]);
+        if(v[8][word]>1000)throw new IOException("DailyLog highBatteryV raw out of range block="+requestedDayIndex+" word="+word+" value="+v[8][word]);
+        DailyLogRecord r=new DailyLogRecord(); r.logDate=timestamp.date;r.logTime=timestamp.time;
+        // For W31 this is exactly requestedDayIndex. Earlier words are older by (31-word).
+        r.dayIndex=requestedDayIndex+(31-word);
+        r.energyKwh=v[0][word]/10.0;r.category1Raw=v[1][word];r.floatSeconds=v[2][word];r.highPowerW=highPower;r.highFetTemp=highFet;
+        r.highPvV=v[7][word]/10.0;r.highBatteryV=v[8][word]/10.0;r.collectedAt=Time.now();return r;
     }
 
-    private static DailyTimestamp decodeTimestamp(int low,int high) {
-        int y=2000+((low>>>9)&0x3f),m=low&0x0f,d=(low>>>4)&0x1f,h=(high>>>6)&0x1f,min=high&0x3f;
-        GregorianCalendar c=new GregorianCalendar();c.setLenient(false);c.clear();c.set(y,m-1,d,h,min,0);c.getTime();
-        return new DailyTimestamp(c,format(c,"yyyy-MM-dd"),format(c,"HH:mm"));
+    private static DailyTimestamp decodeTimestamp(int low,int high) throws IOException {
+        try {
+            int y=2000+((low>>>9)&0x3f),m=low&0x0f,d=(low>>>4)&0x1f,h=(high>>>6)&0x1f,min=high&0x3f;
+            GregorianCalendar c=new GregorianCalendar();c.setLenient(false);c.clear();c.set(y,m-1,d,h,min,0);c.getTime();
+            return new DailyTimestamp(c,format(c,"yyyy-MM-dd"),format(c,"HH:mm"));
+        } catch(Exception e){throw new IOException("Invalid DailyLog timestamp low="+low+" high="+high,e);}
+    }
+
+    private static DailyTimestamp parseTimestamp(String date,String time)throws IOException {
+        try {
+            String[] d=date.split("-"),t=time.split(":");GregorianCalendar c=new GregorianCalendar();c.setLenient(false);c.clear();
+            c.set(Integer.parseInt(d[0]),Integer.parseInt(d[1])-1,Integer.parseInt(d[2]),Integer.parseInt(t[0]),Integer.parseInt(t[1]),0);c.getTime();
+            return new DailyTimestamp(c,date,time);
+        }catch(Exception e){throw new IOException("Invalid timestamp "+date+" "+time,e);}
     }
     private static String format(Calendar c,String pattern){SimpleDateFormat f=new SimpleDateFormat(pattern,Locale.US);f.setTimeZone(c.getTimeZone());return f.format(c.getTime());}
 }

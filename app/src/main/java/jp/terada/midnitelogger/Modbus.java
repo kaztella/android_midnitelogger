@@ -85,6 +85,28 @@ public class Modbus {
             return values;
         }
 
+        /**
+         * Read the complete FC104 Daily Log file record for one category.
+         * The on-wire data_length field stays at the proven value 2. For log files
+         * Classic ignores that requested length and returns the complete 64-byte
+         * record (32 little-endian words).
+         */
+        public int[] readDailyCategoryRecord(int unit, int category, int dayIndex) throws IOException {
+            validateDailyDayIndex(dayIndex);
+            if (category < 0 || category > 8) throw new IllegalArgumentException("category must be 0..8: " + category);
+            if (closed) throw new IOException("FC104 DailySession already closed");
+            byte[] data = readInternalOnConnection(out, in, unit, DAILY_DEVICE, 2, dailyAddress(category, dayIndex));
+            if (data.length != 64) {
+                throw new IOException("FC104 Daily Log record expected 64 bytes actual=" + data.length
+                        + " Category=" + category + " DayIndex=" + dayIndex);
+            }
+            int[] words = new int[32];
+            for (int i = 0; i < words.length; i++) words[i] = u16le(data, i * 2);
+            logger.log("RECV", "FC104 RECORD Category=" + category + " DayIndex=" + dayIndex
+                    + " PDU_LEN=" + (9 + data.length) + " BlockWords=" + words.length);
+            return words;
+        }
+
         @Override public void close() {
             if (closed) return;
             closed = true;
