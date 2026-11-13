@@ -33,51 +33,35 @@ public class ClassicReader {
         DailyTimestamp(Calendar c,String d,String t){calendar=c;date=d;time=t;}
     }
 
-    /** All 9 categories for the same 32 physical log slots. */
-    public static final class DailyBlock {
-        public final int dayIndex;
-        public final int[][] categoryWords;
-        DailyBlock(int dayIndex,int[][] words){this.dayIndex=dayIndex;this.categoryWords=words;}
-        public DailyLogRecord recordAt(int word) throws IOException {
-            if(word<0||word>=32)throw new IllegalArgumentException("word must be 0..31");
-            return buildDailyLogRecord(dayIndex,word,categoryWords);
-        }
+    public static final class DailyTimestampBlock {
+        public final int dayIndex; final int[] dateWords; final int[] timeWords;
+        DailyTimestampBlock(int dayIndex,int[] dateWords,int[] timeWords){this.dayIndex=dayIndex;this.dateWords=dateWords;this.timeWords=timeWords;}
+        public DailyTimestamp timestampAt(int word)throws IOException{if(word<0||word>=32)throw new IllegalArgumentException("word must be 0..31");return decodeTimestamp(dateWords[word],timeWords[word]);}
     }
-
+    public static final class DailyPayloadBlock {
+        public final int dayIndex; private final int[][] categoryWords;
+        DailyPayloadBlock(int dayIndex,int[][] words){this.dayIndex=dayIndex;this.categoryWords=words;}
+        public DailyLogRecord recordAt(int word)throws IOException{if(word<0||word>=32)throw new IllegalArgumentException("word must be 0..31");return buildDailyLogRecord(dayIndex,word,categoryWords);}
+    }
     public final class DailySession implements java.io.Closeable {
         private final Modbus.DailySession session;
         private DailySession(Modbus.DailySession session){this.session=session;}
-
-        public DailyBlock readBlock(int dayIndex) throws IOException {
-            int[][] words=new int[9][];
-            for(int category=0;category<=8;category++) {
-                words[category]=session.readDailyCategoryRecord(Config.UNIT_ID,category,dayIndex);
-            }
-            return new DailyBlock(dayIndex,words);
+        public DailyTimestampBlock readTimestampBlock(int dayIndex)throws IOException{
+            int[] cat3=session.readDailyCategoryRecord(Config.UNIT_ID,3,dayIndex);
+            int[] cat6=session.readDailyCategoryRecord(Config.UNIT_ID,6,dayIndex);
+            return new DailyTimestampBlock(dayIndex,cat3,cat6);
         }
-
-        public DailyLogRecord readDailyLog(int dayIndex) throws Exception {
-            // Compatibility behavior: W31 is the requested logical DayIndex.
-            return readBlock(dayIndex).recordAt(31);
+        public DailyPayloadBlock readPayloadBlock(int dayIndex,int[] cat3,int[] cat6)throws IOException{
+            int[][] words=new int[9][];words[3]=cat3;words[6]=cat6;
+            int[] categories={0,1,2,4,5,7,8};
+            for(int category:categories)words[category]=session.readDailyCategoryRecord(Config.UNIT_ID,category,dayIndex);
+            return new DailyPayloadBlock(dayIndex,words);
         }
         @Override public void close(){session.close();}
     }
-
-    public DailySession openDailySession() throws IOException {
-        return new DailySession(modbus.openDailySession(Config.CLASSIC_IP,Config.MODBUS_PORT));
-    }
-
-    /** Compatibility API for legacy helpers. Not used by concentrated rescue. */
-    public DailyTimestamp readDailyTimestamp(int dayIndex) throws Exception {
-        DailyLogRecord row=readDailyLog(dayIndex);
-        return parseTimestamp(row.logDate,row.logTime);
-    }
-
-    public DailyLogRecord readDailyLog(int dayIndex)throws Exception {
-        DailySession s=openDailySession();
-        try{return s.readDailyLog(dayIndex);}finally{s.close();}
-    }
-
+    public DailySession openDailySession()throws IOException{return new DailySession(modbus.openDailySession(Config.CLASSIC_IP,Config.MODBUS_PORT));}
+    public DailyTimestamp readDailyTimestamp(int dayIndex)throws Exception{DailySession s=openDailySession();try{return s.readTimestampBlock(dayIndex).timestampAt(31);}finally{s.close();}}
+    public DailyLogRecord readDailyLog(int dayIndex)throws Exception{DailySession s=openDailySession();try{DailyTimestampBlock t=s.readTimestampBlock(dayIndex);return s.readPayloadBlock(dayIndex,t.dateWords,t.timeWords).recordAt(31);}finally{s.close();}}
     private static DailyLogRecord buildDailyLogRecord(int requestedDayIndex,int word,int[][] v)throws IOException {
         DailyTimestamp timestamp=decodeTimestamp(v[3][word],v[6][word]);
         int highPower=v[4][word]; double highFet=s16(v[5][word])/10.0;
