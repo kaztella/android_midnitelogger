@@ -17,7 +17,13 @@ public final class Config {
     public static final long UPLOAD_RETRY_COOLDOWN_MS = 10L * 60L * 1000L;
     public static final long UPLOAD_RESTORE_WAIT_MS = 3L * 60L * 1000L;
     public static final int BATCH_SIZE = 100;
-    public static final long UPLOAD_LIMIT_MS = 30000L;
+    public static final long UPLOAD_LIMIT_MS = 10000L;
+    public static final long DAILY_MAINTENANCE_INTERVAL_MS = 24L * 60L * 60L * 1000L;
+    public static final long WEEKLY_AUDIT_INTERVAL_MS = 7L * 24L * 60L * 60L * 1000L;
+    public static final long DAILY_MAINTENANCE_BUDGET_MS = 25000L;
+    public static final int DAILY_RECENT_DAYS = 7;
+    public static final int DAILY_AUDIT_DAYS = 365;
+    public static final int DAILY_REPAIR_DAYS = 30;
     public static final long WIFI_SWITCH_TIMEOUT_MS = 15000L;
 
     private Config() {

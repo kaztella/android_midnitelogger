@@ -213,6 +213,20 @@ public class Database extends SQLiteOpenHelper {
         try { c.moveToFirst(); return c.getLong(0); } finally { c.close(); }
     }
 
+    public static final class DailyGapInfo {
+        public final int missingCount; public final String oldestMissingDate;
+        DailyGapInfo(int n,String d){missingCount=n;oldestMissingDate=d;}
+    }
+    public DailyGapInfo findDailyGaps(int days){
+        java.util.HashSet<String> present=new java.util.HashSet<String>();
+        Cursor c=getReadableDatabase().rawQuery("SELECT log_date FROM daily_log",null);
+        try{while(c.moveToNext())present.add(c.getString(0));}finally{c.close();}
+        java.util.Calendar now=java.util.Calendar.getInstance();
+        java.text.SimpleDateFormat f=new java.text.SimpleDateFormat("yyyy-MM-dd",java.util.Locale.US);
+        int missing=0; String oldest=null;
+        for(int i=Math.max(1,days)-1;i>=0;i--){java.util.Calendar d=(java.util.Calendar)now.clone();d.add(java.util.Calendar.DAY_OF_MONTH,-i);String x=f.format(d.getTime());if(!present.contains(x)){missing++;if(oldest==null)oldest=x;}}
+        return new DailyGapInfo(missing,oldest);
+    }
     public long dailyUploadedCount() {
         Cursor c = getReadableDatabase().rawQuery("SELECT count(*) FROM daily_log WHERE uploaded=1", null);
         try { c.moveToFirst(); return c.getLong(0); } finally { c.close(); }

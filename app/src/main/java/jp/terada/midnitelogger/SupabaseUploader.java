@@ -109,6 +109,22 @@ public class SupabaseUploader {
         return uploaded;
     }
 
+    public int upload10s() throws Exception {
+        long deadline=System.currentTimeMillis()+Config.UPLOAD_LIMIT_MS;
+        int total=0;
+        if(System.currentTimeMillis()<deadline) total+=uploadDailyLogsDeadline(deadline);
+        if(System.currentTimeMillis()<deadline) total+=uploadNormalDeadline(deadline);
+        return total;
+    }
+    private int uploadNormalDeadline(long deadline) throws Exception {
+        // upload30s() uses Config.UPLOAD_LIMIT_MS (V8=10s); only start if budget remains.
+        if(System.currentTimeMillis()>=deadline)return 0;
+        return upload30s();
+    }
+    private int uploadDailyLogsDeadline(long deadline) throws Exception {
+        if(System.currentTimeMillis()>=deadline)return 0;
+        return uploadDailyLogs();
+    }
     public int uploadDailyLogs() throws Exception {
         SharedPreferences preferences=context.getSharedPreferences(Config.PREFS,0);
         String normalUrl=clean(preferences.getString("supabase_rpc_url",""));
