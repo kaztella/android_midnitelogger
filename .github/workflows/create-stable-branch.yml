@@ -16,16 +16,16 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Create branch from v1.1.0 tag
+      - name: Create branch from v1.1.0 stable commit
         run: |
-          git fetch --tags
-          git checkout v1.1.0
+          git fetch --all
+          git checkout 6cd483d
           git switch -c stable-signed-v1.1.0
           git push origin stable-signed-v1.1.0
 
       - name: Verify branch
         run: |
-          echo "v1.1.0:"
-          git rev-parse v1.1.0
-          echo "stable-signed-v1.1.0:"
+          echo "Stable source commit:"
+          git rev-parse 6cd483d
+          echo "New branch:"
           git rev-parse stable-signed-v1.1.0
