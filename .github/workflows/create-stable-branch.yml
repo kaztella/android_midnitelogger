@@ -1,0 +1,31 @@
+name: Create stable branch from v1.1.0
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  create:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create branch from v1.1.0 tag
+        run: |
+          git fetch --tags
+          git checkout v1.1.0
+          git switch -c stable-signed-v1.1.0
+          git push origin stable-signed-v1.1.0
+
+      - name: Verify branch
+        run: |
+          echo "v1.1.0:"
+          git rev-parse v1.1.0
+          echo "stable-signed-v1.1.0:"
+          git rev-parse stable-signed-v1.1.0
