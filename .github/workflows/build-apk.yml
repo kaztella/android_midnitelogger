@@ -1,10 +1,10 @@
-name: Build SHL24 APK
+name: Build SHL24 Fixed-Signed APK
 
 on:
   workflow_dispatch:
   push:
     branches:
-      - main
+      - stable-signed-v1.1.0
 
 jobs:
   build:
@@ -25,11 +25,38 @@ jobs:
         with:
           gradle-version: "8.9"
 
+      - name: Restore fixed signing keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 --decode > midnite-logger.jks
+
       - name: Build debug APK
         run: gradle assembleDebug
 
-      - name: Upload APK
+      - name: Sign APK with fixed key
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          $ANDROID_HOME/build-tools/35.0.0/apksigner sign \
+            --ks midnite-logger.jks \
+            --ks-key-alias "$KEY_ALIAS" \
+            --ks-pass "pass:$KEYSTORE_PASSWORD" \
+            --key-pass "pass:$KEY_PASSWORD" \
+            --out app/build/outputs/apk/debug/MidniteLogger-SHL24-FixedSigned.apk \
+            app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Verify APK signature
+        run: |
+          $ANDROID_HOME/build-tools/35.0.0/apksigner verify \
+            --verbose \
+            --print-certs \
+            app/build/outputs/apk/debug/MidniteLogger-SHL24-FixedSigned.apk
+
+      - name: Upload fixed-signed APK
         uses: actions/upload-artifact@v4
         with:
-          name: MidniteLogger-SHL24
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: MidniteLogger-SHL24-FixedSigned-v1.1.0
+          path: app/build/outputs/apk/debug/MidniteLogger-SHL24-FixedSigned.apk
